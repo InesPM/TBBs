@@ -5,7 +5,6 @@ import numpy as np
 import caltable as ct
 from radec2azel import *
 import math
-import sys
 
 # change to use input parameters
 # Example filenames:
@@ -13,7 +12,7 @@ import sys
 #
 #
 
-ffull=sys.argv[1]
+fful=sys.argv[1]
 
 # input: 
 #      filename
@@ -47,7 +46,7 @@ pol=1 # should be 0 or 1
 assert(pol in [0,1])
 
 #outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/bftest-lfs.h5'
-outfilename='/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
+outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
 
 
 #### 
@@ -96,7 +95,7 @@ filter_selection=f.attrs[u'FILTER_SELECTION'].replace('A_','A-')
 #caltabledir='/data/projects/HOLOG_WINDMILL_TESTS/hologanalysis/caltables/20190705B/Holog-20190705-1340'
 caltabledir='/data/holography/Holog-20191212-1130/caltables/'
 #caltablename=caltabledir+"/CalTable-"+"00"+str(st_nr)+'-'+filter_selection+'.dat'
-caltablename=caltabledir+"CalTable-"+"{:03d}".format(st_nr)+'-'+filter_selection+'.dat'
+caltablename=caltabledir+"/CalTable-"+""+str(st_nr)+'-'+filter_selection+'.dat'
 caltable=ct.readTable(caltablename)[1]
 print("Stations present",stations," selected",station)
 
@@ -152,7 +151,7 @@ for sb in subbands[0:]:
     for d,o in zip(available_dipoles,offsets):
         if d in ['DIPOLE_145000000','DIPOLE_145000002']:
              continue
-        #print("Analysing dipole",d,"at offset",o,)
+        print("Analysing dipole",d,"at offset",o,)
         dnr=int(d[-3:])
         # Read data from the offset, so that all are equal
         sbdata=f[s][d][sb][o:o+datalength]
@@ -166,7 +165,7 @@ for sb in subbands[0:]:
         # We're weighing by the number of available dipoles, as this can be different per dipole
         # TODO: Check signs
         bfdata+=sbdata_complex*caltable[dnr,sbnr]*weights[dnr]/len(available_dipoles)
-        #print("nzeroes",np.sum(np.abs(bfdata)==0))
+        print("nzeroes",np.sum(np.abs(bfdata)==0))
 
     # Create subband dataset
     f_out[s].create_dataset(sb,data=bfdata)
