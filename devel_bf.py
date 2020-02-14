@@ -6,6 +6,10 @@ import caltable as ct
 from radec2azel import *
 import math
 
+#------------------------------------------------------------------------
+# Defining functions
+#------------------------------------------------------------------------
+
 # move to radec2azel?
 def utc2jd(utctimestamp):
    from pycrtools import tools
@@ -13,15 +17,23 @@ def utc2jd(utctimestamp):
    dtt=datetime.datetime.utcfromtimestamp(f[s][d][sb].attrs['TIME'])
    timestring=datetime.datetime.strftime(dtt,'%Y-%m-%d %H:%M:%S')
    return tools.strdate2jd(timestring)
-  
+ 
+#------------------------------------------------------------------------
+# Defining variables
+#------------------------------------------------------------------------
+
+pin = '/data/projects/COM_ALERT/tbb/' 
+#pout = '/data/projects/COM_ALERT/pipeline/analysis/veen/'
+pout = '/data/projects/COM_ALERT/pipeline/analysis/marazuela/'
+
 ###ftest='/data/projects/COM_ALERT/tbb/L597863_RS407_D20191112T104924.979Z_tbb.h5'
 #ftest='/data/projects/COM_ALERT/tbb/L597863_RS106_D20191112T104941.585Z_R006_tbb.h5'
 ftest='/data/projects/COM_ALERT/pipeline/data/L43784_SB/L43784_D20120125T211154.887Z_CS004_sbtbb_small.h5'# B0329+54, timeseries data converted to SB data 
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS106_D20191119T094306.216Z_tbb.h5'
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090024.540Z_tbb.h5' # 0.4 seconds, 200 subbands B0329+54
-ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R001_tbb.h5' # SB data B0329 less subbands
+#ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R001_tbb.h5' # SB data B0329 less subbands
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R002_tbb.h5' # SB data B0329 more subbands
-#ffull='/data/projects/COM_ALERT/tbb/L597863_RS305_D20200128T153519.000Z_tbb.h5' # SB data B0329 more subbands
+# ffull = pin + 'L597863_RS305_D20200128T153519.000Z_tbb.h5' # SB data B0329 more subbands
 
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200205T192020.107Z_tbb.h5' # SB data B0329 limited subbands with DM
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200205T192025.449Z_tbb.h5' # SB data B0329 with DM
@@ -29,8 +41,11 @@ ffull='/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R001_tbb
 ####ffull='/data/projects/COM_ALERT/pipeline/data/L43784_SB/L43784_D20120125T211154.887Z_CS004_sbtbb.h5' # B0329+54, timeseries data converted to SB data
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090023.036Z_tbb.h5'
 #ffull='/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090026.119Z_tbb.h5'
+# ffull = pin + 'L597863_RS407_D20200205T192020.107Z_tbb.h5'
+ffull = pin + 'L597863_CS002_D20200211T161560.000Z_R005_tbb.h5'
+
 #(ra,dec)=(3.96812457681,0.969105673609) # B1508+55 [ is ra correct? ]
-(ra,dec)=(0.92934186635,0.952579228492) # B0329
+(ra,dec) = (0.92934186635,0.952579228492) # B0329
 
 
 pol=0 # should be 0 or 1
@@ -41,7 +56,7 @@ assert(calsign in [-1,1])
 assert(bfsign in [-1,1])
 
 #outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/bftest-lfs.h5'
-outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'_cal'+str(calsign)+'_weight'+str(bfsign)+'.h5'
+outfilename = pout + ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'_cal'+str(calsign)+'_weight'+str(bfsign)+'.h5'
 f_out=h5py.File(outfilename,'w')
 
 
@@ -50,7 +65,11 @@ do_test=False
 
 
 # maximum offset between subbands 
-offset_max_allowed=40
+offset_max_allowed=40 # Slice number unit
+
+#------------------------------------------------------------------------
+# Reading files
+#------------------------------------------------------------------------
 
 # select and read input file
 if do_test:
@@ -90,13 +109,13 @@ filter_selection=f.attrs[u'FILTER_SELECTION'].replace('A_','A-')
 #caltabledir='/data/projects/HOLOG_WINDMILL_TESTS/hologanalysis/caltables/20190705B/Holog-20190705-1340'
 caltabledir='/data/holography/Holog-20191212-1130/caltables/'
 #caltablename=caltabledir+"/CalTable-"+"00"+str(st_nr)+'-'+filter_selection+'.dat'
-caltablename=caltabledir+"/CalTable-"+""+str(st_nr)+'-'+filter_selection+'.dat'
+caltablename=caltabledir+"CalTable-"+"{:03d}".format(st_nr)+'-'+filter_selection+'.dat'
 caltable=ct.readTable(caltablename)[1]
 if calsign==-1:
     caltable=np.conjugate(caltable)
 print("Stations present",stations," selected",station)
 
-print("Selection dipols")
+print("Selection dipoles")
 # Select dipoles
 dipoles=f[station].keys()
 
@@ -125,7 +144,7 @@ for sb in subbands[0:]:
     minstarttime=min(starttimes)
     maxstarttime=max(starttimes)
     diffstarttimes=(maxstarttime[0]-minstarttime[0]+maxstarttime[1]-minstarttime[1])/timeresolution
-    offsets=[int(math.ceil(((maxstarttime[0]-st[0])+(maxstarttime[1]-st[1]))/timeresolution)) for st in starttimes]
+    offsets=[int(math.ceil(((maxstarttime[0]-st[0])+(maxstarttime[1]-st[1]))/timeresolution)) for st in starttimes] # In time slices
     flag_offsets=[num for num,o in enumerate(offsets) if o>offset_max_allowed]
     if len(flag_offsets)>0: print('flagging',len(flag_offsets),'dipoles',offsets); 
     if len(flag_offsets)>10:
@@ -150,7 +169,10 @@ for sb in subbands[0:]:
     if bfsign==-1:
          weights=np.conjugate(weights)
          
+    #--------------------------------------------------------------------
     # The beamforming part
+    #--------------------------------------------------------------------
+
     for d,o in zip(available_dipoles,offsets):
         if d in ['DIPOLE_145000000','DIPOLE_145000002','DIPOLE_167000001','DIPOLE_167000003','DIPOLE_167000000','DIPOLE_167000002','DIPOLE_167000004','DIPOLE_167000006','DIPOLE_167001008','DIPOLE_167001010','DIPOLE_167001012','DIPOLE_167001014','DIPOLE_167001016','DIPOLE_167001018']:
              continue
@@ -173,8 +195,10 @@ for sb in subbands[0:]:
     # Create subband dataset
     f_out[s].create_dataset(sb,data=bfdata)
 
-      
+    #--------------------------------------------------------------------  
     # Add metadata
+    #--------------------------------------------------------------------
+
     for k in list(f[s][d][sb].attrs):
         if k not in ['FLAG_OFFSETS','SLICE_NUMBER']:
              f_out[s][sb].attrs.create(k,data=f[s][d][sb].attrs[k])
@@ -196,5 +220,10 @@ for sb in subbands[0:]:
     for k in [u'DIPOLE_IDS']:
          f_out[s][sb].attrs.create(k,data=[str(d) for d in available_dipoles])
 
+#------------------------------------------------------------------------
+# Writing new file
+#------------------------------------------------------------------------
+
 f_out.close()
 print("File written: ",outfilename)
+
