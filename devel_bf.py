@@ -14,6 +14,7 @@ import sys
 #
 
 ffull=sys.argv[1]
+max_nzeroes=50000
 
 # input: 
 #      filename
@@ -43,11 +44,11 @@ def utc2jd(utctimestamp):
 (ra,dec)=(0.92934186635,0.952579228492) # B0329
 
 
-pol=1 # should be 0 or 1
+pol=0 # should be 0 or 1
 assert(pol in [0,1])
 
 #outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/bftest-lfs.h5'
-outfilename='/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
+outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
 
 
 #### 
@@ -83,6 +84,8 @@ for k in f.attrs.keys():
          else:
              print("failed to create key",k)
 f_out.create_group(s)
+f_out[s].create_group('WEIGHTS')
+f_out[s].create_group('BFDATA')
 for k in f[s].attrs.keys():
      try: 
          f_out[s].attrs.create(k,data=f[s].attrs[k])
@@ -96,7 +99,7 @@ filter_selection=f.attrs[u'FILTER_SELECTION'].replace('A_','A-')
 #caltabledir='/data/projects/HOLOG_WINDMILL_TESTS/hologanalysis/caltables/20190705B/Holog-20190705-1340'
 caltabledir='/data/holography/Holog-20191212-1130/caltables/'
 #caltablename=caltabledir+"/CalTable-"+"00"+str(st_nr)+'-'+filter_selection+'.dat'
-caltablename=caltabledir+"CalTable-"+"{:03d}".format(st_nr)+'-'+filter_selection+'.dat'
+caltablename=caltabledir+"/CalTable-"+""+str(st_nr)+'-'+filter_selection+'.dat'
 caltable=ct.readTable(caltablename)[1]
 print("Stations present",stations," selected",station)
 
@@ -118,7 +121,6 @@ for sb in subbands[0:]:
     if len(available_dipoles)==0:
        continue
 
-    print("subband",sb,"# Available dipoles",len(available_dipoles))
 
     print("Calculating offsets")
     # use one dipole to select some of the keywords. We assume they are even over the subband
@@ -130,15 +132,16 @@ for sb in subbands[0:]:
     minstarttime=min(starttimes)
     maxstarttime=max(starttimes)
     diffstarttimes=(maxstarttime[0]-minstarttime[0]+maxstarttime[1]-minstarttime[1])/timeresolution
-    offsets=[int(math.ceil((maxstarttime[0]-st[0]+maxstarttime[1]-st[1])/timeresolution)) for st in starttimes]
-    flag_offsets=[num for num,o in enumerate(offsets) if o>offset_max_allowed]
+    offsets2=[int(math.ceil(((st[0]-minstarttime[0])+(st[1]-minstarttime[1]))/timeresolution)) for st in starttimes]
+    flag_offsets=[num for num,o in enumerate(offsets2) if o>offset_max_allowed]
     available_dipoles=[d for num,d in enumerate(available_dipoles) if num not in flag_offsets]
     starttimes=[(f[s][d][sb].attrs['TIME'],timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) for d in available_dipoles]
     minstarttime=min(starttimes)
     maxstarttime=max(starttimes)
-    offsets=[int(math.ceil((maxstarttime[0]-st[0]+maxstarttime[1]-st[1])/timeresolution)) for st in starttimes]
+    offsets=[int(round((maxstarttime[0]-st[0]+maxstarttime[1]-st[1])/timeresolution)) for st in starttimes]
     datalength=min(datalengths)-max(offsets)
 
+    print("subband",sb,"# Available dipoles",len(available_dipoles))
 
     print("Creating output datasets")
     bfdata=np.zeros(shape=(datalength,),dtype=np.complex)
@@ -147,12 +150,13 @@ for sb in subbands[0:]:
     # Calculate time for the weights. We could vary the weight over the observation if this is longer than one second
     t=utc2jd(f[s][d0][sb].attrs['TIME'])
     weights=azel2beamweights(getRADEC_2_AZEL(ra,dec,t),station_name,f[s][d0][sb].attrs[u'CENTRAL_FREQUENCY']).toNumpy()
-         
+    ndipoles=len(available_dipoles) 
     # The beamforming part
+    sbweight=np.zeros(shape=datalength)
     for d,o in zip(available_dipoles,offsets):
         if d in ['DIPOLE_145000000','DIPOLE_145000002']:
              continue
-        #print("Analysing dipole",d,"at offset",o,)
+        print("Analysing dipole",d,"at offset",o,)
         dnr=int(d[-3:])
         # Read data from the offset, so that all are equal
         sbdata=f[s][d][sb][o:o+datalength]
@@ -165,20 +169,27 @@ for sb in subbands[0:]:
         # In the beamforming we correct for the calibration delay and the beamforming weights
         # We're weighing by the number of available dipoles, as this can be different per dipole
         # TODO: Check signs
-        bfdata+=sbdata_complex*caltable[dnr,sbnr]*weights[dnr]/len(available_dipoles)
-        #print("nzeroes",np.sum(np.abs(bfdata)==0))
-
+        dipoledata=sbdata_complex*caltable[dnr,sbnr]*weights[dnr]
+        dipoleweight=dipoledata/dipoledata
+        dipoleweight[np.isnan(dipoleweight)]=0
+        sbweight+=dipoleweight
+        nzeroes=np.sum(np.abs(dipoledata)==0)
+        bfdata+=dipoledata
+        print("nzeroes",nzeroes/len(bfdata))
+    sbweight[sbweight==0]=1
+    bfdata/=np.sqrt(sbweight)
     # Create subband dataset
-    f_out[s].create_dataset(sb,data=bfdata)
+    f_out[s]['BFDATA'].create_dataset(sb,data=bfdata)
+    f_out[s]['WEIGHTS'].create_dataset(sb,data=sbweight)
 
       
     # Add metadata
     for k in list(f[s][d][sb].attrs):
         if k not in ['FLAG_OFFSETS','SLICE_NUMBER']:
-             f_out[s][sb].attrs.create(k,data=f[s][d][sb].attrs[k])
+             f_out[s]['BFDATA'][sb].attrs.create(k,data=f[s][d][sb].attrs[k])
     # Correct slice number for the offsets
     # TODO: Add check that all offsets are the same
-    f_out[s][sb].attrs.create('SLICE_NUMBER',data=f[s][d][sb].attrs['SLICE_NUMBER']+np.array(offsets)[np.array(available_dipoles)==d][0])
+    f_out[s]['BFDATA'][sb].attrs.create('SLICE_NUMBER',data=f[s][d][sb].attrs['SLICE_NUMBER']+np.array(offsets)[np.array(available_dipoles)==d][0])
     for k in [
      #u'TILE_BEAM', # TODO- read all TILE keys
      #u'TILE_BEAM_UNIT',
@@ -187,12 +198,12 @@ for sb in subbands[0:]:
      #u'SAMPLE_FREQUENCY_UNIT',
      u'NYQUIST_ZONE',
      u'SAMPLE_FREQUENCY']:
-         f_out[s][sb].attrs.create(k,data=f[s][d].attrs[k])
+         f_out[s]['BFDATA'][sb].attrs.create(k,data=f[s][d].attrs[k])
     for k in [u'RCU_ID',
      u'RSP_ID']:
-         f_out[s][sb].attrs.create(k,data=[f[s][d].attrs[k] for d in available_dipoles])
+         f_out[s]['BFDATA'][sb].attrs.create(k,data=[f[s][d].attrs[k] for d in available_dipoles])
     for k in [u'DIPOLE_IDS']:
-         f_out[s][sb].attrs.create(k,data=[str(d) for d in available_dipoles])
+         f_out[s]['BFDATA'][sb].attrs.create(k,data=[str(d) for d in available_dipoles])
 
 f_out.close()
 print("File written: ",outfilename)
