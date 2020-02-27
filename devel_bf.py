@@ -6,64 +6,53 @@ import caltable as ct
 from radec2azel import *
 import math
 import sys
+from optparse import OptionParser
 
-# change to use input parameters
-# Example filenames:
-# /data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R002_tbb.h5' # SB data B0329 more subbands
-#
-#
+#------------------------------------------------------------------------
+# Defining functions
+#------------------------------------------------------------------------
 
-ffull=sys.argv[1]
-max_nzeroes=50000
-
-# input: 
-#      filename
-#      ra
-#      dec
-#      pol
-#      outfilename or outfilepath
-
-# move to radec2azel?
 def utc2jd(utctimestamp):
    from pycrtools import tools
    import datetime
    dtt=datetime.datetime.utcfromtimestamp(f[s][d][sb].attrs['TIME'])
    timestring=datetime.datetime.strftime(dtt,'%Y-%m-%d %H:%M:%S')
    return tools.strdate2jd(timestring)
-  
-#'/data/projects/COM_ALERT/tbb/L597863_RS106_D20191119T094306.216Z_tbb.h5'
-#'/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090024.540Z_tbb.h5' # 0.4 seconds, 200 subbands B0329+54
-#'/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R001_tbb.h5' # SB data B0329 limited subbands
-#'/data/projects/COM_ALERT/tbb/L597863_RS407_D20200128T162407.000Z_R002_tbb.h5' # SB data B0329 more subbands
-#'/data/projects/COM_ALERT/tbb/L597863_RS305_D20200128T153519.000Z_tbb.h5' # SB data B0329 more subbands
 
-####'/data/projects/COM_ALERT/pipeline/data/L43784_SB/L43784_D20120125T211154.887Z_CS004_sbtbb.h5' # B0329+54, timeseries data converted to SB data
-#'/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090023.036Z_tbb.h5'
-#'/data/projects/COM_ALERT/tbb/L597863_RS310_D20190809T090026.119Z_tbb.h5'
-#(ra,dec)=(3.96812457681,0.969105673609) # B1508+55 [ is ra correct? ]
-(ra,dec)=(0.92934186635,0.952579228492) # B0329
+ 
 
+#------------------------------------------------------------------------
+# Command line options
+#------------------------------------------------------------------------
+parser = OptionParser()
 
-pol=0 # should be 0 or 1
+parser.add_option("-r", "--right_ascension", dest="ra", type="float", default=0.92934186635, help="Right ascension of the source in degrees. Default RA: B0329")
+parser.add_option("-d", "--declination", dest="dec", type="float", default=0.952579228492, help="Declination of the source. Default Dec: B0329")
+parser.add_option("-p", "--polarisation", dest="pol", type="int", default=0, help="Polarisation to beamform.")
+parser.add_option("-o", "--offset_max_allowed", dest="offset_max_allowed", type="int", default=400, help="Maximum offset between subbands in time bins.")
+parser.add_option("-f", "--outfiledir", type="str", default="/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/", help="Directory where the output files will be generated.")
+
+(options, args) = parser.parse_args()
+
+ffull=args[0]
+
+(ra,dec) = (options.ra, options.dec)
+pol = options.pol
+offset_max_allowed = options.offset_max_allowed
+outfilename = options.outfiledir + ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
+
 assert(pol in [0,1])
 
-#outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/bftest-lfs.h5'
-outfilename='/data/projects/COM_ALERT/pipeline/analysis/veen/'+ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
+#------------------------------------------------------------------------
+# Opening files
 
+# Open given tbb file
+f=h5py.File(ffull,'r')
 
-#### 
-
+# Open output file
 f_out=h5py.File(outfilename,'w')
 
-
-
-
-
-# maximum offset between subbands 
-offset_max_allowed=400
-
-# select and read input file
-f=h5py.File(ffull,'r')
+#### 
 
 # Select stations in file. We now only select the first station. We could loop over stations, but at the moment one station is written per file
 stations=[k for k in f.keys() if 'STATION' in k]
@@ -91,7 +80,12 @@ for k in f[s].attrs.keys():
          f_out[s].attrs.create(k,data=f[s].attrs[k])
      except:
          print("failed to create key",k)
-
+# Additional keywords
+for k in ["DIPOLE_NAMES","SELECTED_DIPOLES"]:
+    try :
+        f_out.attrs.create(k,data=[str(d.replace('DIPOLE_', '')) for d in f[station].keys() if int(d[-3:])%2==pol])
+    except :
+        print("failed to create key",k)
 
 
 # Read calibration tables. These should also be in a directory in the image, but can be old.
@@ -99,7 +93,7 @@ filter_selection=f.attrs[u'FILTER_SELECTION'].replace('A_','A-')
 #caltabledir='/data/projects/HOLOG_WINDMILL_TESTS/hologanalysis/caltables/20190705B/Holog-20190705-1340'
 caltabledir='/data/holography/Holog-20191212-1130/caltables/'
 #caltablename=caltabledir+"/CalTable-"+"00"+str(st_nr)+'-'+filter_selection+'.dat'
-caltablename=caltabledir+"/CalTable-"+""+str(st_nr)+'-'+filter_selection+'.dat'
+caltablename=caltabledir+"CalTable-"+""+"{:03d}".format(st_nr)+'-'+filter_selection+'.dat'
 caltable=ct.readTable(caltablename)[1]
 print("Stations present",stations," selected",station)
 
@@ -113,7 +107,7 @@ subbands.sort()
 
 # TODO loop over subbands, first a porton, then all
 subband=subbands[0]
-for sb in subbands[0:]:
+for sb in subbands[0:5]:
     sbnr=int(sb[-3:])
     # Select all dipoles that have this subband in their keys, for the even or odd polarisations
     available_dipoles=[d for d in dipoles if sb in f[s][d].keys() if int(d[-3:])%2==pol ]
