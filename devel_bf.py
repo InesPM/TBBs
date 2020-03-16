@@ -1,9 +1,11 @@
 from __future__ import print_function
 from __future__ import division
 import h5py
+import pycrtools as cr
 import numpy as np
 import caltable as ct
 from radec2azel import *
+import dedispersion as dd
 import math
 import sys
 from optparse import OptionParser
@@ -223,11 +225,7 @@ class beamformer:
              data=self.infile[s][d][sb].attrs['SLICE_NUMBER'] + 
              np.array(offsets)[np.array(available_dipoles)==d][0])
         for k in [
-          #u'TILE_BEAM', # TODO- read all TILE keys
-          #u'TILE_BEAM_UNIT',
           u'STATION_ID',
-          #u'TILE_BEAM_FRAME',
-          #u'SAMPLE_FREQUENCY_UNIT',
           u'NYQUIST_ZONE',
           u'SAMPLE_FREQUENCY']:
              self.outfile[s]['BFDATA'][sb].attrs.create(k,data=self.infile[s][d].attrs[k])
@@ -262,7 +260,7 @@ class beamformer:
 
         # TODO loop over subbands, first a porton, then all
         subband=subbands[0]
-        for sb in subbands[0:]:
+        for sb in subbands[0:2]:
             # Select all dipoles that have this subband in their keys, 
             # for the even or odd polarisations
             available_dipoles = [d for d in dipoles if sb in self.infile[s][d].keys() 
@@ -283,6 +281,85 @@ class beamformer:
         # Closing output file
         self.outfile.close()
 
+    def convert2beam(self, dynspecfile, DM=26.8, nch=16, t_int=6):
+
+	# Opening beamformed data
+        self.outfile = h5py.File(self.outfilename,'r')
+
+        print(self.outfile.keys())
+        st = list(self.outfile.keys())[0]
+
+        subbands = sorted(list(self.outfile[st]['BFDATA'].keys()))
+        nsb = len(subbands)
+        datalen = self.outfile[st]['BFDATA'][subbands[0]].shape[0]
+        datalen = datalen-datalen%(2*nch*t_int)
+
+
+        complexdynspec = np.zeros(dtype = self.outfile[st]['BFDATA'][subbands[0]].dtype, shape = (nsb,datalen))
+        self.subband_frequencies = np.zeros(dtype = float,shape=(nsb))
+        self.weights = np.zeros(dtype = self.outfile[st][u'WEIGHTS'][subbands[0]].dtype, shape = (nsb,datalen))
+
+        for num,sb in enumerate(subbands):
+            complexdynspec[num] = self.outfile[st]['BFDATA'][sb][0:datalen]
+            self.subband_frequencies[num] = self.outfile[st]['BFDATA'][sb].attrs[u'CENTRAL_FREQUENCY']
+            #weights[num] = self.outfile[st][u'WEIGHTS'][sb][0:datalen]
+
+        # Same resolution as BF data : nch=16
+        data01 = complexdynspec[:,:].T
+        s = data01.shape
+        fftdata01 = np.fft.fft(data01.reshape(s[0]//nch, nch, s[1]).swapaxes(1,2), axis=2).reshape(s[0]//nch, nch*s[1])
+
+        # Dynamic spectrum
+        self.subband_bandwidth = self.outfile[st]['BFDATA'][subbands[0]].attrs['BANDWIDTH'] #Hz
+        self.subband_timeresolution = self.outfile[st]['BFDATA'][subbands[0]].attrs['TIME_RESOLUTION'] #seconds
+
+
+        self.channel_timeresolution = self.subband_timeresolution*nch
+        channel_bandwidth = self.subband_bandwidth/nch
+        self.channel_frequencies = np.zeros(dtype=float,shape=(nsb,nch))
+        self.channel_delays = np.zeros(dtype=int,shape=(nsb,nch))
+
+        for num,sbfreq in enumerate(self.subband_frequencies):
+            self.channel_frequencies[num] = (np.arange(nch)-nch/2) * channel_bandwidth + sbfreq
+            self.channel_delays[num] = dd.freq_to_delay(DM, self.channel_frequencies[num], self.channel_timeresolution)
+        self.channel_frequencies = self.channel_frequencies.reshape((nsb*nch))
+        self.channel_delays = self.channel_delays.reshape((nsb*nch))
+
+        dynspec1 = np.abs(fftdata01)
+        if False:
+            for ch,delay in enumerate(self.channel_delays):
+                if int(delay) >= 1:
+                    dynspec1[0:-int(delay),ch] = dynspec1[int(delay):,ch]
+                    dynspec1[-int(delay):,ch] = 0 #dynspec[0:int(delay),ch]
+
+        # Spectrum
+        specstd = np.std(dynspec1,axis=0)
+        spect_raw = np.sum(dynspec1,axis=0)
+        noisyness = (spect_raw/np.median(spect_raw))/(specstd/np.median(specstd))
+        flagfreq = (noisyness<0.95)|(noisyness>1.05)
+
+        # Start time
+        self.starttime = [self.outfile[st]['BFDATA'][sb].attrs['TIME']%100 + self.outfile[st]['BFDATA'][sb].attrs['SLICE_NUMBER'] * self.subband_timeresolution for sb in sorted(subbands)]
+
+        # Downsampling data
+        f_int = nch//2 # Best visualized when nch/f_int=2
+        dynspec2 = np.sum(dynspec1.reshape(dynspec1.shape[0]//t_int, t_int, dynspec1.shape[1])/t_int, axis=1)
+        dynspec3 = np.sum(dynspec2.reshape(dynspec2.shape[0], dynspec2.shape[1]//f_int, f_int)/f_int, axis=2)
+
+        self.spectrum = np.average(dynspec3,axis=0)
+
+        # Writing beamformed data
+        #self.dynspec = cr.hArray(float, name=dynspecfile, fill=(dynspec3/self.spectrum).T)
+        #self.dynspec.write(dynspecfile)
+        
+        #self.dynspec = (dynspec3/self.spectrum).T
+        #np.save(dynspecfile.replace('.h5', '.npy'), self.dynspec)
+
+        beam = cr.hArray(fftdata01, ext='.beam')
+	beam.write(dynspecfile)
+        # Closing beamformed data
+        self.outfile.close()
+
 #------------------------------------------------------------------------
 # Command line options
 #------------------------------------------------------------------------
@@ -300,10 +377,11 @@ ffull=args[0]
 
 (ra,dec) = (options.ra, options.dec)
 pol = options.pol
+assert(pol in [0,1])
+
 offset_max_allowed = options.offset_max_allowed
 outfilename = options.outfiledir + ffull.split('/')[-1][0:-3]+'bf_pol'+str(pol)+'.h5'
-
-assert(pol in [0,1])
+outfiledyn = options.outfiledir + ffull.split('/')[-1][0:-3]+'_fft_pol'+str(pol)
 
 #------------------------------------------------------------------------
 # Opening input file
@@ -317,5 +395,8 @@ infile = h5py.File(ffull,'r')
 
 b = beamformer(infile, outfilename)
 b.beamforming()
+b.convert2beam(outfiledyn)
 
-print("File written: ",outfilename)
+
+print("File written: ", outfilename)
+print("File written: ", outfiledyn)
