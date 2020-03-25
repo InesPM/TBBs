@@ -6,15 +6,15 @@ import numpy as np
 import caltable as ct
 from radec2azel import *
 import dedispersion as dd
-import math
+from math import *
 import sys
 import glob
 from optparse import OptionParser
-
+from datetime import datetime
 
 # Defining the workspace parameters
-deg = math.pi / 180.
-pi2 = math.pi / 2.
+deg = pi / 180.
+pi2 = pi / 2.
 
 #------------------------------------------------------------------------
 # Defining functions
@@ -149,6 +149,9 @@ class BeamFormer:
                         data=self.tbb_files[0][s].attrs[k])
             except:
                 print("failed to create key",k)
+
+        # TODO: define 'BEAM_FREQUENCIES' 
+        # Central frequencies of the frequency channels
 
     def read_calibration(
             self, inputfile, 
@@ -403,6 +406,47 @@ class BeamFormer:
     #-------------------------------------------------------------------
     # FFT related functions
 
+    def dedispersed_time(dm, t0, f1, f2=0.2):
+        """
+        Getting dedispersed time for given time and frequency subband
+        """
+        f1 = f1*1e-9 # GHz
+        t = 4.15e-3 * dm * (1/f1**2 - 1/f2**2)
+
+        return t0-t
+
+    def __get_time_hr(self, string=False):
+        """
+        Getting the 'TIME_HR' header keyword from the input data.
+        Dedispersing to the reference frequency 200 MHz
+        """
+
+        s = self.station
+        self.tbb_files = []
+        for f in self.infile :
+            self.tbb_files.append(h5py.File(f, 'r'))
+
+        self.time_hr = []
+        self.time = []
+        self.sample_number = []
+
+        for f in self.tbb_files:
+            for d in f[s].keys():
+                sbs = f[s][d].keys()
+                tr = f[s][d][sbs[-1]].attrs['TIME_RESOLUTION']
+                t0 = (f[s][d][sbs[-1]].attrs['TIME'] 
+                     + tr * f[s][d][sbs[-1]].attrs['SLICE_NUMBER'])
+                f1 = f[s][d][sbs[-1]].attrs[u'CENTRAL_FREQUENCY']
+
+                t = dedispersed_time(self.dm, t0, f1)
+                self.time.append(int(t))
+
+                tstring = datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
+                self.time_hr.append(tstring)
+
+                samplenum = int((t - floor(t))/5e-9)
+                self.sample_number.append(samplenum)
+
     def __header_dictionary(self):
         """
         Creating beamformed data header.
@@ -413,6 +457,8 @@ class BeamFormer:
         # TODO: use setHeader and updateHeader with the reqired keywords
 
         f = h5py.File(self.infile[0], 'r')
+
+        self.get_time_hr
 
         # Defining keyword dictionary
 
@@ -460,8 +506,10 @@ class BeamFormer:
             "BLOCK": 0,
             "SAMPLE_FREQUENCY_UNIT": 
                     [f.attrs["CLOCK_FREQUENCY_UNIT"]] * self.ndipoles,
-            "TIME_HR": [] * self.ndipoles, # Time freezing?
-            "CLOCK_OFFSET": [] * self.ndipoles, # 8.318834e-06
+            "TIME_HR": self.time_hr, 
+            "CLOCK_OFFSET": [md.getClockCorrection(self.station_name, 
+                    antennaset='HBA_DUAL', time=t) 
+                    for t in self.time], 
             "BLOCKSIZE": "", # 1024
             "ANTENNA_POSITION": "", 
                     #  [3826575.52551, 460961.8472, 5064899.465]*96
@@ -496,16 +544,16 @@ class BeamFormer:
             "OBSERVATION_START_TAI": "UNDEFINED",
             "DATA_LENGTH": [204800000] * self.ndipoles, # Check
             "NOF_DIPOLE_DATASETS": self.ndipoles,
-            "FFT_DATA": self.fftdata, # Put in hArray
+            "FFT_DATA": cr.hArray(self.fftdata, ext='.beam'),
             #"EMPTY_TIMESERIES_DATA": "",
             "SAMPLE_FREQUENCY": [200000000.0] * self.ndipoles,
-            "TIME": "", # Check
+            "TIME": self.time,
             "CABLE_DELAY_UNIT": "", # Error
             "SELECTED_DIPOLES": [d.replace('DIPOLE_','')
                     for dip in self.dipoles for d in dip],
             "FREQUENCY_INTERVAL": 
                    [self.bffile[self.station]['BFDATA'][self.subbands[0]]
-                   .attrs['BANDWIDTH']] * self.ndipoles  
+                   .attrs['BANDWIDTH'] / self.nch] * self.ndipoles  
 
         }
 
