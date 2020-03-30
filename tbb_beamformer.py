@@ -96,66 +96,16 @@ class BeamFormer:
         self.station_name = self.station[-5:]
         self.station_number = int(self.station[-3:]) 
 
-    def __keyword_dictionary(self):
-        """Creating output keyword dictionary"""
+    def __data_groups(self):
+        """Creating output data groups"""
 
         s = self.station
-
-        # Checking that all attributes are the same
-        for k in self.tbb_files[0].attrs.keys() :
-            if 'FILENAME' not in k :
-                try:
-                    if not all(f.attrs[k] == self.tbb_files[0].attrs[k] 
-                           for f in self.tbb_files):
-                        print("ERROR: Attribute ",k, " not matching every file")
-                        sys.exit()
-                except:
-                    if not all(f.attrs[k][i] == att for f in self.tbb_files 
-                           for i,att in enumerate(self.tbb_files[0].attrs[k])):
-                        print("ERROR: Attribute ",k, " not matching every file")
-                        sys.exit()
-
-        # Keywords from input file
-        for k in self.tbb_files[0].attrs.keys():
-            try:
-                self.bffile.attrs.create(k,data=self.tbb_files[0].attrs[k])
-            except:
-                if k in ["TARGETS","OBSERVATION_STATIONS_LIST"]:
-                    self.bffile.attrs.create(k,
-                        data=[vv for vv in self.tbb_files[0].attrs[k]])
-                else:
-                    print("failed to create key",k)
-
-        # Additional keywords
-        for k in ["DIPOLE_NAMES","SELECTED_DIPOLES"]:
-            try :
-                self.bffile.attrs.create(k,data=[str(d.replace('DIPOLE_', '')) 
-                     for d in self.tbb_files[0][s].keys() if int(d[-3:])%2==self.ol])
-            except :
-                print("failed to create key",k)
 
         # Creating beamformed data groups
         self.bffile.create_group(s)
         self.bffile[s].create_group('WEIGHTS')
         self.bffile[s].create_group('BFDATA')
-        for k in self.tbb_files[0][s].attrs.keys():
-            try:
-                if k == u'NOF_DIPOLES':
-                    ndipoles = 0
-                    for f in self.tbb_files :
-                        ndipoles += f[s].attrs[k]
-                    self.bffile[s].attrs.create(k,data=ndipoles)
-                else :
-                    self.bffile[s].attrs.create(k,
-                        data=self.tbb_files[0][s].attrs[k])
-            except:
-                print("failed to create key",k)
 
-        # TODO: define 'BEAM_FREQUENCIES' 
-        # Central frequencies of the frequency channels
-
-        # TODO: Add self.nsubbands, self.ntimebins
- 
     def read_calibration(
             self, inputfile, 
             caltabledir='/data/holography/Holog-20191212-1130/caltables/'
@@ -163,10 +113,11 @@ class BeamFormer:
         """Reading calibration tables"""
 
         # TODO: check this
-        filter_selection = inputfile.attrs[u'FILTER_SELECTION'].replace('A_','A-')
-        caltablename = caltabledir + "CalTable-" + "" \
-                       + "{:03d}".format(self.station_number) \
-                       + '-' + filter_selection + '.dat'
+        filter_selection = (inputfile.attrs[u'FILTER_SELECTION']
+                .replace('A_','A-'))
+        caltablename = (caltabledir + "CalTable-" + "" 
+                + "{:03d}".format(self.station_number) 
+                + '-' + filter_selection + '.dat')
         caltable=ct.readTable(caltablename)[1]
         
         return caltable        
@@ -183,7 +134,6 @@ class BeamFormer:
         self.subbands = np.unique(np.concatenate([f[s][d].keys() 
                         for f in self.tbb_files for d in f[s].keys()]))
         self.subbands.sort()
-
         self.nsubbands = len(self.subbands)
 
         #return dipoles, subbands
@@ -343,6 +293,71 @@ class BeamFormer:
             self.bffile[s]['BFDATA'][sb].attrs.create(k,data=[str(d) 
                 for d in available_dipoles])    
 
+    def __keyword_dictionary(self):
+        """Creating output keyword dictionary"""
+
+        # Checking that all attributes are the same
+        for k in self.tbb_files[0].attrs.keys() :
+            if 'FILENAME' not in k :
+                try:
+                    if not all(f.attrs[k] == self.tbb_files[0].attrs[k]
+                           for f in self.tbb_files):
+                        print("ERROR: Attribute",k,"not matching every file")
+                        sys.exit()
+                except:
+                    if not all(f.attrs[k][i] == att for f in self.tbb_files
+                           for i,att in enumerate(self.tbb_files[0].attrs[k])):
+                        print("ERROR: Attribute",k,"not matching every file")
+                        sys.exit()
+
+        # Creating keyword dictionary
+
+        self.keyword_dict = {
+
+            # Keywords from input file
+            # TODO: Add keywords from original attribute list
+            'TARGETS': [vv for vv in self.tbb_files[0].attrs['TARGETS']],
+            'OBSERVATION_STATIONS_LIST': 
+                    [vv for vv 
+                    in self.tbb_files[0].attrs['OBSERVATION_STATIONS_LIST']],
+
+            # Derived keywords
+            'STATION': self.station,
+            'STATION_NAME': self.station_name,
+            'STATION_NUMBER': self.station_number,
+            'NOF_SELECTED_DATASETS': self.ndipoles,
+            'NOF_DIPOLE_DATASETS': self.ndipoles,
+            'DIPOLE_NAMES': [d for dip in self.dipoles for d in dip],
+            'SELECTED_DIPOLES': 
+                    [d.replace('DIPOLE_','') for dip in self.dipoles 
+                    for d in dip],
+            'SELECTED_DIPOLES_INDEX': range(self.ndipoles),
+            'CHANNEL_ID': 
+                    [int(d.replace('DIPOLE_','')) for dip in self.dipoles
+                    for d in dip],
+            'SUBBANDS': self.subbands,
+            'NOF_SUBBANDS': self.nsubbands,
+            'SAMPLE_FREQUENCY': 200000000.0,
+            'SAMPLE_FREQUENCY_UNIT': f.attrs["CLOCK_FREQUENCY_UNIT"], 
+            'SAMPLE_FREQUENCY_VALUE': 200.0,
+            'BANDWIDTH': 
+                    self.bffile[self.station]['BFDATA'][self.subbands[0]]
+                    .attrs['BANDWIDTH'] # Check this
+            #'CLOCK_FREQUENCY_UNIT': ,
+            'SAMPLE_INTERVAL': 5e-9,
+            'SAMPLE_INTERVAL_UNIT': 's',
+            'DIPOLE_CALIBRATION_DELAY_UNIT': 's',
+
+        }
+
+       
+        # Writing keyword dictionary to output file
+        for k in self.keyword_dict.keys():
+            try:
+                self.bffile.attrs.create(k, data=self.keyword_dict[k])
+            except:
+                print("failed to create key",k)
+
     #-------------------------------------------------------------------
     # Beamforming data
 
@@ -492,124 +507,6 @@ class BeamFormer:
             'block_duration': block_duration
         }
 
-    def __header_dictionary(self):
-        """
-        Creating beamformed data header.
-        It needs some variables to be defined.
-        Apply at the end of convert2beam.
-        """
-
-        # TODO: use setHeader and updateHeader with the reqired keywords
-
-        f = h5py.File(self.infile[0], 'r')
-
-        self.__get_time_hr()
-        self.__bf_dictionary()
-
-        # Defining keyword dictionary
-
-        self.keyword_dict = {
-
-            # Existing keywords
-            "OBSERVATION_START_UTC": f.attrs["OBSERVATION_START_UTC"],
-            "OBSERVATION_ID": f.attrs["OBSERVATION_ID"],
-            "CLOCK_FREQUENCY_UNIT": f.attrs["CLOCK_FREQUENCY_UNIT"],
-            "NOTES": f.attrs["NOTES"],
-            "OBSERVATION_FREQUENCY_CENTER": 
-                    f.attrs["OBSERVATION_FREQUENCY_CENTER"],
-            "PROJECT_PI": f.attrs["PROJECT_PI"],
-            "OBSERVATION_END_UTC": f.attrs["OBSERVATION_END_UTC"],
-            "PROJECT_CO_I": f.attrs["PROJECT_CO_I"],
-            "TELESCOPE": f.attrs["TELESCOPE"],
-            "ANTENNA_SET": f.attrs["ANTENNA_SET"],
-            "OBSERVATION_START_MJD": f.attrs["OBSERVATION_START_MJD"],
-            "PROJECT_CONTACT": f.attrs["PROJECT_CONTACT"],
-            "FILTER_SELECTION": f.attrs["FILTER_SELECTION"],
-            "FILETYPE": f.attrs["FILETYPE"],
-            "OBSERVATION_FREQUENCY_MAX": f.attrs["OBSERVATION_FREQUENCY_MAX"],
-            "CLOCK_FREQUENCY": f.attrs["CLOCK_FREQUENCY"],
-            "OBSERVATION_END_MJD": f.attrs["OBSERVATION_END_MJD"],
-            "OBSERVATION_NOF_STATIONS": f.attrs["OBSERVATION_NOF_STATIONS"],
-            "OBSERVATION_FREQUENCY_UNIT": 
-                    f.attrs["OBSERVATION_FREQUENCY_UNIT"],
-            "SYSTEM_VERSION": f.attrs["SYSTEM_VERSION"],
-            "OBSERVATION_FREQUENCY_MIN": f.attrs["OBSERVATION_FREQUENCY_MIN"],
-            "PROJECT_ID": f.attrs["PROJECT_ID"],
-            "PROJECT_TITLE": f.attrs["PROJECT_TITLE"],
-            "FILEDATE": f.attrs["FILEDATE"],
-            "FILENAME": f.attrs["FILENAME"],
-            "TARGET": f.attrs["TARGETS"],
-
-            # Derived keywords that we need
-            "FREQUENCY_DATA": 
-                    cr.hArray(self.channel_frequencies, name="Frequency"),
-            "ALIGNMENT_REFERENCE_ANTENNA": 0, # TODO: check how this is defined
-            "PIPELINE_NAME": "UNDEFINED",
-            "DIPOLE_NAMES": [d for dip in self.dipoles for d in dip],
-            "BLOCK": 0,
-            "BLOCKSIZE": "", # 1024
-            "SAMPLE_FREQUENCY_UNIT":
-                    [f.attrs["CLOCK_FREQUENCY_UNIT"]] * self.ndipoles,
-            "CLOCK_OFFSET": 
-                    [md.getClockCorrection(self.station_name,
-                    antennaset='HBA_DUAL', time=t)
-                    for t in self.time_key],
-            "MAXIMUM_READ_LENGTH": 204800000, # Check
-            "STATION_NAME": [self.station_name] * self.ndipoles,
-            "FFTSIZE": self.fftdata.shape[1],
-            "SAMPLE_NUMBER": [177325056] * self.ndipoles, # Check 177325056
-            "NYQUIST_ZONE": [2] * self.ndipoles,
-            "FREQUENCY_RANGE": "", # [(100000000.0, 200000000.0)] * 96
-            "PIPELINE_VERSION": "UNDEFINED",
-            "FREQUENCY_INTERVAL":
-                   [self.bffile[self.station]['BFDATA'][self.subbands[0]]
-                   .attrs['BANDWIDTH'] / self.nch] * self.ndipoles,
-
-            # Derived keywords that are less relevant
-            "TIMESERIES_DATA": "", # Check
-            "NOTES": "",
-            #"EMPTY_FFT_DATA": cr.hArray(Type=complex, name="fft(E-Field)")
-            #"CABLE_ATTENUATION":
-            "TIME_HR": self.time_hr,
-            "TIME": self.time_key,
-            "ANTENNA_POSITION": "",
-                    #  [3826575.52551, 460961.8472, 5064899.465]*96
-            "NOF_STATION_GROUPS": 1, # Check
-            "ITRF_ANTENNA_POSITION": "",
-                    # Same as "ANTENNA_POSITION" but cr.hArray
-            "SAMPLE_INTERVAL": [5e-09] * self.ndipoles, # Check
-            "CABLE_LENGTH": cr.hArray([115] * self.ndipoles), # Check
-            "OBSERVER": "I. Pastor-Marazuela",
-            "OBSERVATION_END_TAI": "UNDEFINED",
-            "OBSERVATION_STATION_LIST": ["UNDEFINED"],
-            "SAMPLE_FREQUENCY_VALUE": [200.0] * self.ndipoles,
-            "CHANNEL_ID": 
-                    [int(d.replace('DIPOLE_',''))
-                    for dip in self.dipoles for d in dip],
-            "SELECTED_DIPOLES_INDEX": range(self.ndipoles),
-            "STATION_GAIN_CALIBRATION": "", # No idea
-            "LCR_ANTENNA_POSITION": "", # No idea
-            "CABLE_DELAY": "", # Error
-            "SCR_ANTENNA_POSITION": "", # No idea
-            "NOF_SELECTED_DATASETS": self.ndipoles,
-            "DIPOLE_CALIBRATION_DELAY_UNITDIPOLE_CALIBRATION_DELAY_UNIT":
-                    ['s'] * self.ndipoles,
-            "OBSERVATION_START_TAI": "UNDEFINED",
-            "NOF_DIPOLE_DATASETS": self.ndipoles,
-            "DATA_LENGTH": [204800000] * self.ndipoles, # Check
-            "SAMPLE_FREQUENCY": [200000000.0] * self.ndipoles,
-            "CABLE_DELAY_UNIT": "", # Error
-            "SELECTED_DIPOLES": 
-                    [d.replace('DIPOLE_','') 
-                    for dip in self.dipoles for d in dip],
-
-            # Possibly generated keywords
-            "TIME_DATA": "", # No idea
-            "FFT_DATA": cr.hArray(self.fftdata, ext='.beam')
-            #"EMPTY_TIMESERIES_DATA": "",
-
-        }
-
     def write_dynspec(self) :
         """
         Saving Beamformed FFT data into a .beam file
@@ -707,8 +604,7 @@ class BeamFormer:
             CABLE_DELAY = "", # Error
             SCR_ANTENNA_POSITION = "", # No idea
             NOF_SELECTED_DATASETS = self.ndipoles,
-            DIPOLE_CALIBRATION_DELAY_UNITDIPOLE_CALIBRATION_DELAY_UNIT =
-                    ['s'] * self.ndipoles,
+            DIPOLE_CALIBRATION_DELAY_UNIT = ['s'] * self.ndipoles,
             OBSERVATION_START_TAI = "UNDEFINED",
             NOF_DIPOLE_DATASETS = self.ndipoles,
             DATA_LENGTH = [204800000] * self.ndipoles, # Check
@@ -729,8 +625,8 @@ class BeamFormer:
 
 
         # Writing to file
-        hfftdata.write(self.dynspecfile, writeheader=True, clearfile=True, 
-                ext='.beam')
+        hfftdata.write(self.dynspecfile, writeheader=True, 
+                clearfile=True, ext='.beam')
 
         # Writing header
         hfftdata.writeheader(self.dynspecfile, ext='.beam')
