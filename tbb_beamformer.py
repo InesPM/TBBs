@@ -2,6 +2,7 @@ from __future__ import print_function
 from __future__ import division
 import h5py
 import pycrtools as cr
+from pycrtools import Beam_Tools as bt
 import numpy as np
 import caltable as ct
 from radec2azel import *
@@ -153,6 +154,8 @@ class BeamFormer:
         # TODO: define 'BEAM_FREQUENCIES' 
         # Central frequencies of the frequency channels
 
+        # TODO: Add self.nsubbands, self.ntimebins
+ 
     def read_calibration(
             self, inputfile, 
             caltabledir='/data/holography/Holog-20191212-1130/caltables/'
@@ -180,6 +183,8 @@ class BeamFormer:
         self.subbands = np.unique(np.concatenate([f[s][d].keys() 
                         for f in self.tbb_files for d in f[s].keys()]))
         self.subbands.sort()
+
+        self.nsubbands = len(self.subbands)
 
         #return dipoles, subbands
 
@@ -210,36 +215,36 @@ class BeamFormer:
         num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
         timeresolution = self.tbb_files[num][s][d0][sb].attrs['TIME_RESOLUTION']
         starttimes = [(f[s][d][sb].attrs['TIME'], 
-                     timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
-                     for i,f in enumerate(self.tbb_files)
-                     for d in self.dipoles[i] if d in available_dipoles]
+                timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
+                for i,f in enumerate(self.tbb_files)
+                for d in self.dipoles[i] if d in available_dipoles]
         datalengths = [f[s][d][sb].shape[0] 
-                      for i,f in enumerate(self.tbb_files)
-                      for d in self.dipoles[i] if d in available_dipoles]
+                for i,f in enumerate(self.tbb_files)
+                for d in self.dipoles[i] if d in available_dipoles]
 
         minstarttime = min(starttimes)
         maxstarttime = max(starttimes)
         diffstarttimes = (maxstarttime[0] - minstarttime[0] 
-                         + maxstarttime[1] - minstarttime[1]) / timeresolution
+                + maxstarttime[1] - minstarttime[1]) / timeresolution
 
         offsets2  = [int(math.ceil(((st[0] - minstarttime[0]) + 
-                    (st[1]-minstarttime[1])) / timeresolution)) 
-                    for st in starttimes]
+                (st[1]-minstarttime[1])) / timeresolution)) 
+                for st in starttimes]
         flag_offsets = [num for num,o in enumerate(offsets2) 
-                       if o > self.offset_max_allowed]
+                if o > self.offset_max_allowed]
         available_dipoles = [d for num,d in enumerate(available_dipoles) 
-                            if num not in flag_offsets]
+                if num not in flag_offsets]
         starttimes = [(f[s][d][sb].attrs['TIME'], 
-                     timeresolution * f[s][d][sb].attrs['SLICE_NUMBER']) 
-                     for i,f in enumerate(self.tbb_files) 
-                     for d in self.dipoles[i] 
-                     if d in available_dipoles]
+                timeresolution * f[s][d][sb].attrs['SLICE_NUMBER']) 
+                for i,f in enumerate(self.tbb_files) 
+                for d in self.dipoles[i] 
+                if d in available_dipoles]
         minstarttime = min(starttimes)
         maxstarttime = max(starttimes)
 
         offsets = [int(math.ceil((maxstarttime[0] - st[0] 
-                  + maxstarttime[1] - st[1])/timeresolution)) 
-                  for st in starttimes]
+                + maxstarttime[1] - st[1])/timeresolution)) 
+                for st in starttimes]
         datalength = min(datalengths) - max(offsets)
 
         print("subband",sb,"# Available dipoles",len(available_dipoles))
@@ -264,9 +269,9 @@ class BeamFormer:
         # Calculate time for the weights. 
         t = utc2jd(self.tbb_files[num][s][d0][sb].attrs['TIME'])
         weights = azel2beamweights(getRADEC_2_AZEL(ra,dec,t), 
-                  self.station_name, 
-                  self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY']
-                  ).toNumpy()
+                self.station_name, 
+                self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY']
+                ).toNumpy()
         ndipoles = len(available_dipoles) 
 
         # The beamforming part
@@ -324,7 +329,7 @@ class BeamFormer:
         # Correct slice number for the offsets
         self.bffile[s]['BFDATA'][sb].attrs.create('SLICE_NUMBER', 
              data = self.tbb_files[num][s][d0][sb].attrs['SLICE_NUMBER'] 
-                    + np.array(offsets)[np.array(available_dipoles)==d0][0])
+                     + np.array(offsets)[np.array(available_dipoles)==d0][0])
         for k in [u'STATION_ID', u'NYQUIST_ZONE', u'SAMPLE_FREQUENCY']:
              self.bffile[s]['BFDATA'][sb].attrs.create(k,
                  data=self.tbb_files[num][s][d0].attrs[k])
@@ -381,8 +386,7 @@ class BeamFormer:
             # Select all dipoles that have this subband in their keys, 
             # for the even or odd polarisations
             available_dipoles = [d for f in self.tbb_files for d in f[s].keys()
-                                if sb in f[s][d].keys() 
-                                if int(d[-3:])%2==self.pol]
+                    if sb in f[s][d].keys() if int(d[-3:])%2==self.pol]
             available_dipoles.sort()
             if len(available_dipoles)==0:
                 continue
@@ -415,7 +419,7 @@ class BeamFormer:
 
         return t0-t
 
-    def __get_time_hr(self, string=False):
+    def __get_time_hr(self):
         """
         Getting the 'TIME_HR' header keyword from the input data.
         Dedispersing to the reference frequency 200 MHz
@@ -427,7 +431,7 @@ class BeamFormer:
             self.tbb_files.append(h5py.File(f, 'r'))
 
         self.time_hr = []
-        self.time = []
+        self.time_key = []
         self.sample_number = []
 
         for f in self.tbb_files:
@@ -435,17 +439,58 @@ class BeamFormer:
                 sbs = f[s][d].keys()
                 tr = f[s][d][sbs[-1]].attrs['TIME_RESOLUTION']
                 t0 = (f[s][d][sbs[-1]].attrs['TIME'] 
-                     + tr * f[s][d][sbs[-1]].attrs['SLICE_NUMBER'])
+                        + tr * f[s][d][sbs[-1]].attrs['SLICE_NUMBER'])
                 f1 = f[s][d][sbs[-1]].attrs[u'CENTRAL_FREQUENCY']
 
                 t = dedispersed_time(self.dm, t0, f1)
-                self.time.append(int(t))
+                self.time_key.append(int(t))
 
                 tstring = datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
                 self.time_hr.append(tstring)
 
                 samplenum = int((t - floor(t))/5e-9)
                 self.sample_number.append(samplenum)
+
+    def __bf_dictionary(self):
+        """
+        Defining BeamFormer dictionary, with keywords from pycrtools/beamformer.py
+        required for imaging
+        """
+
+        stride = 1
+        delta_nu = 1 
+        maxchunklen = 2*20
+        filesize = 204800000
+        sample_interval = 5e-9
+        blocklen = len(self.channel_frequencies)
+        chunklen = min(filesize/stride, maxchunklen)
+        max_nblocks = int(floor(filesize / stride / blocklen))
+        #nblocks = int(min(max(round(chunklen / blocklen), 1), max_nblocks))
+        speclen = len(self.channel_frequencies) #blocklen/2 + 1
+        start_time = 0
+        end_time = self.fftdata.shape[0]*5.12e-6 * self.nch
+        block_duration = 5.12e-6 * self.nch
+        nblocks = self.fftdata.shape[0]
+
+        self.bf_dict = {
+            'stride': stride,
+            'delta_nu': delta_nu,
+            'filesize': filesize,
+            'sample_interval': sample_interval,
+            'maxchunklen': filesize,
+            'chunklen': chunklen,
+            'max_nblocks': max_nblocks,
+
+            'antenna_set': 'HBA1',
+            'blocklen': blocklen,
+            'nantennas_total': 48,
+            'nblocks': nblocks,
+            'speclen': speclen,
+
+            'start_time': start_time,
+            'end_time': end_time,
+            'block_duration': block_duration
+        }
 
     def __header_dictionary(self):
         """
@@ -458,7 +503,8 @@ class BeamFormer:
 
         f = h5py.File(self.infile[0], 'r')
 
-        self.get_time_hr
+        self.__get_time_hr()
+        self.__bf_dictionary()
 
         # Defining keyword dictionary
 
@@ -492,70 +538,203 @@ class BeamFormer:
             "PROJECT_TITLE": f.attrs["PROJECT_TITLE"],
             "FILEDATE": f.attrs["FILEDATE"],
             "FILENAME": f.attrs["FILENAME"],
+            "TARGET": f.attrs["TARGETS"],
 
-            # Derived keywords
-            "FREQUENCY_DATA": cr.hArray(
-                    self.channel_frequencies, name="Frequency"),
+            # Derived keywords that we need
+            "FREQUENCY_DATA": 
+                    cr.hArray(self.channel_frequencies, name="Frequency"),
             "ALIGNMENT_REFERENCE_ANTENNA": 0, # TODO: check how this is defined
-            "TIMESERIES_DATA": "", # Check
             "PIPELINE_NAME": "UNDEFINED",
+            "DIPOLE_NAMES": [d for dip in self.dipoles for d in dip],
+            "BLOCK": 0,
+            "BLOCKSIZE": "", # 1024
+            "SAMPLE_FREQUENCY_UNIT":
+                    [f.attrs["CLOCK_FREQUENCY_UNIT"]] * self.ndipoles,
+            "CLOCK_OFFSET": 
+                    [md.getClockCorrection(self.station_name,
+                    antennaset='HBA_DUAL', time=t)
+                    for t in self.time_key],
+            "MAXIMUM_READ_LENGTH": 204800000, # Check
+            "STATION_NAME": [self.station_name] * self.ndipoles,
+            "FFTSIZE": self.fftdata.shape[1],
+            "SAMPLE_NUMBER": [177325056] * self.ndipoles, # Check 177325056
+            "NYQUIST_ZONE": [2] * self.ndipoles,
+            "FREQUENCY_RANGE": "", # [(100000000.0, 200000000.0)] * 96
+            "PIPELINE_VERSION": "UNDEFINED",
+            "FREQUENCY_INTERVAL":
+                   [self.bffile[self.station]['BFDATA'][self.subbands[0]]
+                   .attrs['BANDWIDTH'] / self.nch] * self.ndipoles,
+
+            # Derived keywords that are less relevant
+            "TIMESERIES_DATA": "", # Check
             "NOTES": "",
             #"EMPTY_FFT_DATA": cr.hArray(Type=complex, name="fft(E-Field)")
-            "DIPOLE_NAMES": [d for dip in self.dipoles for d in dip],
-            #"CABLE_ATTENUATION": 
-            "BLOCK": 0,
-            "SAMPLE_FREQUENCY_UNIT": 
-                    [f.attrs["CLOCK_FREQUENCY_UNIT"]] * self.ndipoles,
-            "TIME_HR": self.time_hr, 
-            "CLOCK_OFFSET": [md.getClockCorrection(self.station_name, 
-                    antennaset='HBA_DUAL', time=t) 
-                    for t in self.time], 
-            "BLOCKSIZE": "", # 1024
-            "ANTENNA_POSITION": "", 
+            #"CABLE_ATTENUATION":
+            "TIME_HR": self.time_hr,
+            "TIME": self.time_key,
+            "ANTENNA_POSITION": "",
                     #  [3826575.52551, 460961.8472, 5064899.465]*96
-            "MAXIMUM_READ_LENGTH": 204800000, # Check
             "NOF_STATION_GROUPS": 1, # Check
-            "ITRF_ANTENNA_POSITION": "", 
+            "ITRF_ANTENNA_POSITION": "",
                     # Same as "ANTENNA_POSITION" but cr.hArray
-            "STATION_NAME": [self.station_name] * self.ndipoles,
             "SAMPLE_INTERVAL": [5e-09] * self.ndipoles, # Check
             "CABLE_LENGTH": cr.hArray([115] * self.ndipoles), # Check
-            "FFTSIZE": self.fftdata.shape[1],
             "OBSERVER": "I. Pastor-Marazuela",
             "OBSERVATION_END_TAI": "UNDEFINED",
             "OBSERVATION_STATION_LIST": ["UNDEFINED"],
-            "SAMPLE_FREQUENCY_VALUE": [200.2] * self.ndipoles,
-            "SAMPLE_NUMBER": [177325056] * self.ndipoles, # Check 177325056
-            "CHANNEL_ID": [int(d.replace('DIPOLE_','')) 
+            "SAMPLE_FREQUENCY_VALUE": [200.0] * self.ndipoles,
+            "CHANNEL_ID": 
+                    [int(d.replace('DIPOLE_',''))
                     for dip in self.dipoles for d in dip],
             "SELECTED_DIPOLES_INDEX": range(self.ndipoles),
-            "NYQUIST_ZONE": [2] * self.ndipoles,
             "STATION_GAIN_CALIBRATION": "", # No idea
-            "FREQUENCY_RANGE": "", # [(100000000.0, 200000000.0)] * 96
-            "PIPELINE_VERSION": "UNDEFINED",
             "LCR_ANTENNA_POSITION": "", # No idea
             "CABLE_DELAY": "", # Error
             "SCR_ANTENNA_POSITION": "", # No idea
-            "TIME_DATA": "", # No idea
             "NOF_SELECTED_DATASETS": self.ndipoles,
-            "DIPOLE_CALIBRATION_DELAY_UNITDIPOLE_CALIBRATION_DELAY_UNIT": 
+            "DIPOLE_CALIBRATION_DELAY_UNITDIPOLE_CALIBRATION_DELAY_UNIT":
                     ['s'] * self.ndipoles,
-            "TARGET": f.attrs["TARGETS"],
             "OBSERVATION_START_TAI": "UNDEFINED",
-            "DATA_LENGTH": [204800000] * self.ndipoles, # Check
             "NOF_DIPOLE_DATASETS": self.ndipoles,
-            "FFT_DATA": cr.hArray(self.fftdata, ext='.beam'),
-            #"EMPTY_TIMESERIES_DATA": "",
+            "DATA_LENGTH": [204800000] * self.ndipoles, # Check
             "SAMPLE_FREQUENCY": [200000000.0] * self.ndipoles,
-            "TIME": self.time,
             "CABLE_DELAY_UNIT": "", # Error
-            "SELECTED_DIPOLES": [d.replace('DIPOLE_','')
+            "SELECTED_DIPOLES": 
+                    [d.replace('DIPOLE_','') 
                     for dip in self.dipoles for d in dip],
-            "FREQUENCY_INTERVAL": 
-                   [self.bffile[self.station]['BFDATA'][self.subbands[0]]
-                   .attrs['BANDWIDTH'] / self.nch] * self.ndipoles  
+
+            # Possibly generated keywords
+            "TIME_DATA": "", # No idea
+            "FFT_DATA": cr.hArray(self.fftdata, ext='.beam')
+            #"EMPTY_TIMESERIES_DATA": "",
 
         }
+
+    def write_dynspec(self) :
+        """
+        Saving Beamformed FFT data into a .beam file
+        """
+
+        # Writing data        
+        hfftdata = cr.hArray(self.fftdata, name="Beamed FFT")
+
+        # Writing header
+        f = h5py.File(self.infile[0], 'r')
+
+        self.__get_time_hr()
+        self.__bf_dictionary()
+
+        hfftdata.setHeader(
+
+            # Existing keywords
+            OBSERVATION_START_UTC = f.attrs["OBSERVATION_START_UTC"],
+            OBSERVATION_ID = f.attrs["OBSERVATION_ID"],
+            CLOCK_FREQUENCY_UNIT = f.attrs["CLOCK_FREQUENCY_UNIT"],
+            NOTES = f.attrs["NOTES"],
+            OBSERVATION_FREQUENCY_CENTER =
+                    f.attrs["OBSERVATION_FREQUENCY_CENTER"],
+            PROJECT_PI = f.attrs["PROJECT_PI"],
+            OBSERVATION_END_UTC = f.attrs["OBSERVATION_END_UTC"],
+            PROJECT_CO_I = f.attrs["PROJECT_CO_I"],
+            TELESCOPE = f.attrs["TELESCOPE"],
+            ANTENNA_SET = f.attrs["ANTENNA_SET"],
+            OBSERVATION_START_MJD = f.attrs["OBSERVATION_START_MJD"],
+            PROJECT_CONTACT = f.attrs["PROJECT_CONTACT"],
+            FILTER_SELECTION = f.attrs["FILTER_SELECTION"],
+            FILETYPE = f.attrs["FILETYPE"],
+            OBSERVATION_FREQUENCY_MAX = f.attrs["OBSERVATION_FREQUENCY_MAX"],
+            CLOCK_FREQUENCY = f.attrs["CLOCK_FREQUENCY"],
+            OBSERVATION_END_MJD = f.attrs["OBSERVATION_END_MJD"],
+            OBSERVATION_NOF_STATIONS = f.attrs["OBSERVATION_NOF_STATIONS"],
+            OBSERVATION_FREQUENCY_UNIT =
+                    f.attrs["OBSERVATION_FREQUENCY_UNIT"],
+            SYSTEM_VERSION = f.attrs["SYSTEM_VERSION"],
+            OBSERVATION_FREQUENCY_MIN = f.attrs["OBSERVATION_FREQUENCY_MIN"],
+            PROJECT_ID = f.attrs["PROJECT_ID"],
+            PROJECT_TITLE = f.attrs["PROJECT_TITLE"],
+            FILEDATE = f.attrs["FILEDATE"],
+            FILENAME = f.attrs["FILENAME"],
+            TARGET = f.attrs["TARGETS"],
+
+            # Derived keywords that we need
+            FREQUENCY_DATA = cr.hArray(
+                    self.channel_frequencies, name="Frequency"),
+            ALIGNMENT_REFERENCE_ANTENNA = 0, # TODO: check how this is defined
+            PIPELINE_NAME = "UNDEFINED",
+            DIPOLE_NAMES = [d for dip in self.dipoles for d in dip],
+            BLOCK = 0,
+            BLOCKSIZE = "", # 1024
+            SAMPLE_FREQUENCY_UNIT =
+                    [f.attrs["CLOCK_FREQUENCY_UNIT"]] * self.ndipoles,
+            clock_offset = 
+                    [md.getClockCorrection(self.station_name,
+                    antennaset='HBA_DUAL', time=t)
+                    for t in self.time_key],
+            MAXIMUM_READ_LENGTH = 204800000, # Check
+            STATION_NAME = [self.station_name] * self.ndipoles,
+            FFTSIZE = self.fftdata.shape[1],
+            SAMPLE_NUMBER = [177325056] * self.ndipoles, # Check 177325056
+            NYQUIST_ZONE = [2] * self.ndipoles,
+            FREQUENCY_RANGE = "", # [(100000000.0, 200000000.0)] * 96
+            PIPELINE_VERSION = "UNDEFINED",
+            FREQUENCY_INTERVAL =
+                   [self.bffile[self.station]['BFDATA'][self.subbands[0]]
+                   .attrs['BANDWIDTH'] / self.nch] * self.ndipoles,
+
+            # Derived keywords that are less relevant
+            TIMESERIES_DATA = "", # Check
+            #"EMPTY_FFT_DATA = cr.hArray(Type=complex, name="fft(E-Field)")
+            #"CABLE_ATTENUATION =
+            TIME_HR = self.time_hr,
+            TIME = self.time_key,
+            ANTENNA_POSITION = "",
+                    #  [3826575.52551, 460961.8472, 5064899.465]*96
+            NOF_STATION_GROUPS = 1, # Check
+            ITRF_ANTENNA_POSITION = "",
+                    # Same as ANTENNA_POSITION" but cr.hArray
+            SAMPLE_INTERVAL = [5e-09] * self.ndipoles, # Check
+            CABLE_LENGTH = cr.hArray([115] * self.ndipoles), # Check
+            OBSERVER = "I. Pastor-Marazuela",
+            OBSERVATION_END_TAI = "UNDEFINED",
+            OBSERVATION_STATION_LIST = ["UNDEFINED"],
+            SAMPLE_FREQUENCY_VALUE = [200.0] * self.ndipoles,
+            CHANNEL_ID = 
+                    [int(d.replace('DIPOLE_','')) for dip in self.dipoles 
+                    for d in dip],
+            SELECTED_DIPOLES_INDEX = range(self.ndipoles),
+            STATION_GAIN_CALIBRATION = "", # No idea
+            LCR_ANTENNA_POSITION = "", # No idea
+            CABLE_DELAY = "", # Error
+            SCR_ANTENNA_POSITION = "", # No idea
+            NOF_SELECTED_DATASETS = self.ndipoles,
+            DIPOLE_CALIBRATION_DELAY_UNITDIPOLE_CALIBRATION_DELAY_UNIT =
+                    ['s'] * self.ndipoles,
+            OBSERVATION_START_TAI = "UNDEFINED",
+            NOF_DIPOLE_DATASETS = self.ndipoles,
+            DATA_LENGTH = [204800000] * self.ndipoles, # Check
+            SAMPLE_FREQUENCY = [200000000.0] * self.ndipoles,
+            CABLE_DELAY_UNIT = "", # Error
+            SELECTED_DIPOLES = 
+                    [d.replace('DIPOLE_','') for dip in self.dipoles 
+                    for d in dip],
+
+            # Possibly generated keywords
+            TIME_DATA = "", # No idea
+            FFT_DATA = cr.hArray(self.fftdata, ext='.beam'),
+            #"EMPTY_TIMESERIES_DATA = "",
+
+            # BeamFormer keywords
+            BeamFormer = self.bf_dict
+        )
+
+
+        # Writing to file
+        hfftdata.write(self.dynspecfile, writeheader=True, clearfile=True, 
+                ext='.beam')
+
+        # Writing header
+        hfftdata.writeheader(self.dynspecfile, ext='.beam')
+
 
     #-------------------------------------------------------------------
     # FFTing data and saving to .beam file
@@ -573,6 +752,7 @@ class BeamFormer:
         # TODO: FIX THIS FUNCTION
 
 	# Opening beamformed data
+        self.dynspecfile = dynspecfile
         self.bffile = h5py.File(self.bffilename,'r')
         self.dm = DM
         self.nch = nch
@@ -599,20 +779,21 @@ class BeamFormer:
         for num,sb in enumerate(self.subbands):
             complexdynspec[num] = self.bffile[st]['BFDATA'][sb][0:datalen]
             self.subband_frequencies[num] = (self
-                .bffile[st]['BFDATA'][sb].attrs[u'CENTRAL_FREQUENCY'])
+                    .bffile[st]['BFDATA'][sb].attrs[u'CENTRAL_FREQUENCY'])
             #weights[num] = self.outfile[st][u'WEIGHTS'][sb][0:datalen]
 
         # Same resolution as BF data : nch=16
         data01 = complexdynspec[:,:].T
-        s = data01.shape
-        self.fftdata = np.fft.fft(data01.reshape(s[0]//nch, nch, 
-                    s[1]).swapaxes(1,2), axis=2).reshape(s[0]//nch, nch*s[1])
+        sh = data01.shape
+        self.fftdata = np.fft.fft(data01.reshape(sh[0]//nch, nch, 
+                sh[1]).swapaxes(1,2), axis=2).reshape(sh[0]//nch, nch*sh[1])
+        self.fftdata.reshape(self.fftdata.shape[0],1,self.fftdata.shape[1])
 
         # Dynamic spectrum
         self.subband_bandwidth = (self
-            .bffile[st]['BFDATA'][sb0].attrs['BANDWIDTH']) #Hz
+                .bffile[st]['BFDATA'][sb0].attrs['BANDWIDTH']) #Hz
         self.subband_timeresolution = (self
-            .bffile[st]['BFDATA'][sb0].attrs['TIME_RESOLUTION']) #s
+                .bffile[st]['BFDATA'][sb0].attrs['TIME_RESOLUTION']) #s
 
         self.channel_timeresolution = self.subband_timeresolution * nch
         self.channel_bandwidth = self.subband_bandwidth / nch
@@ -621,15 +802,15 @@ class BeamFormer:
 
         for num,sbfreq in enumerate(self.subband_frequencies):
             self.channel_frequencies[num] = ((np.arange(nch)-nch/2)
-                * self.channel_bandwidth + sbfreq)
+                    * self.channel_bandwidth + sbfreq)
             self.channel_delays[num] = dd.freq_to_delay(DM, 
-                self.channel_frequencies[num], self.channel_timeresolution)
+                    self.channel_frequencies[num], self.channel_timeresolution)
         self.channel_frequencies = self.channel_frequencies.reshape((nsb*nch))
         self.channel_delays = self.channel_delays.reshape((nsb*nch))
 
 
         # TODO: SKIP FROM HERE
-        dynspec1 = np.abs(fftdata01)
+        dynspec1 = np.abs(self.fftdata)
         if False:
             for ch,delay in enumerate(self.channel_delays):
                 if int(delay) >= 1:
@@ -644,15 +825,15 @@ class BeamFormer:
 
         # Start time
         self.starttime = [self.bffile[st]['BFDATA'][sb].attrs['TIME']%100 
-                         + self.bffile[st]['BFDATA'][sb].attrs['SLICE_NUMBER'] 
-                         * self.subband_timeresolution for sb in sorted(subbands)]
+                + self.bffile[st]['BFDATA'][sb].attrs['SLICE_NUMBER'] 
+                * self.subband_timeresolution for sb in sorted(subbands)]
 
         # Downsampling data
         f_int = nch//2 # Best visualized when nch/f_int=2
         dynspec2 = np.sum(dynspec1.reshape(dynspec1.shape[0]//t_int, 
-                   t_int, dynspec1.shape[1])/t_int, axis=1)
+                t_int, dynspec1.shape[1])/t_int, axis=1)
         dynspec3 = np.sum(dynspec2.reshape(dynspec2.shape[0], 
-                   dynspec2.shape[1]//f_int, f_int)/f_int, axis=2)
+                dynspec2.shape[1]//f_int, f_int)/f_int, axis=2)
 
         self.spectrum = np.average(dynspec3,axis=0)
 
