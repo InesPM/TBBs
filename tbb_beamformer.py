@@ -30,7 +30,8 @@ class BeamFormer:
     
 
     def __init__(self, infile, bffilename, 
-            pol=0, offset_max_allowed=400, overwrite=True):
+            pol=0, substation='HBA', offset_max_allowed=400, overwrite=True,
+            test=False):
         
         # Input h5py data
         self.infile = infile #h5py.File(infile,'r')
@@ -40,7 +41,9 @@ class BeamFormer:
 
         # Other inputs
         self.overwrite = overwrite
+        self.test = test
         self.pol = pol
+        self.substation = substation
         self.offset_max_allowed = offset_max_allowed
 
     #-------------------------------------------------------------------
@@ -109,13 +112,26 @@ class BeamFormer:
         
         return caltable        
 
+    def __dipole_in_selection(self, dipole):
+        d=int(dipole[-3:])
+        if self.substation=='HBA0':
+            if d%2 == self.pol and d<48: return True
+        if self.substation=='HBA1':
+            if d%2 == self.pol and d>=48: return True
+        if self.substation=='HBA':
+            if d%2 == self.pol: return True
+        return False
+
     def __dipoles_subbands(self):
         """Function selecting dipoles and subbands from input data"""
 
         s = self.station
         # Selecting dipoles
         self.dipoles = [f[s].keys() for f in self.tbb_files]
-        self.ndipoles = len([d for dip in self.dipoles for d in dip])
+        self.selected_dipoles = [d for dip in self.dipoles for d in dip 
+                if self.__dipole_in_selection(d)]
+        self.selected_dipoles.sort()
+        self.ndipoles = len(self.selected_dipoles)
 
         # Select subbands
         self.subbands = np.unique(np.concatenate([f[s][d].keys() 
@@ -132,7 +148,8 @@ class BeamFormer:
 
         # Select all dipoles with the given subband for the given polarisation
         available_dipoles = [d for f in self.tbb_files for d in f[s].keys() 
-                if sb in f[s][d] if int(d[-3:])%2==self.pol]
+                if sb in f[s][d] 
+                if d in self.selected_dipoles]
         available_dipoles.sort()
 
         # Calculating offsets
@@ -209,8 +226,8 @@ class BeamFormer:
         t = utc2jd(self.tbb_files[num][s][d0][sb].attrs['TIME'])
         weights = azel2beamweights(getRADEC_2_AZEL(ra,dec,t), 
                 self.station_name, 
-                self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY']
-                ).toNumpy()
+                self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY'],
+                self.substation).toNumpy()
         ndipoles = len(available_dipoles) 
 
         # The beamforming part
@@ -311,16 +328,18 @@ class BeamFormer:
             'STATION': self.station,
             'STATION_NAME': self.station_name,
             'STATION_NUMBER': self.station_number,
+            'SUBSTATION': self.substation,
             'NOF_SELECTED_DATASETS': self.ndipoles,
             'NOF_DIPOLE_DATASETS': self.ndipoles,
-            'DIPOLE_NAMES': [str(d) for dip in self.dipoles for d in dip],
+            'DIPOLE_NAMES': 
+                    [str(d) for d in self.selected_dipoles],
             'SELECTED_DIPOLES': 
-                    [str(d.replace('DIPOLE_','')) for dip in self.dipoles 
-                    for d in dip],
+                    [str(d.replace('DIPOLE_','')) for d
+                    in self.selected_dipoles],
             'SELECTED_DIPOLES_INDEX': range(self.ndipoles),
             'CHANNEL_ID': 
-                    [int(d.replace('DIPOLE_','')) for dip in self.dipoles
-                    for d in dip],
+                    [int(d.replace('DIPOLE_','')) for d 
+                    in self.selected_dipoles],
             'SUBBANDS': [str(sb) for sb in self.subbands],
             'NOF_SUBBANDS': self.nsubbands,
             'SAMPLE_FREQUENCY': 200000000.0,
@@ -355,7 +374,7 @@ class BeamFormer:
     #-------------------------------------------------------------------
     # Beamforming data
 
-    def beamforming(self, test=False):
+    def beamforming(self):
         """
         Beamforming function.
         It will generate an .h5 file with the tbb beamformed data.
@@ -391,8 +410,10 @@ class BeamFormer:
         self.__dipoles_subbands()
 
         # Defining subbands to loop over. Less subbands for a test
-        if test :
-            sbs = self.subbands[0:2]
+        if self.test :
+            sbs = self.subbands[0:50]
+            self.subbands = self.subbands[0:50]
+            self.nsubbands = len(self.subbands)
         else :
             sbs = self.subbands[0:]
 
@@ -404,7 +425,7 @@ class BeamFormer:
 
             # Select all dipoles with the given subband and given polarisation
             available_dipoles = [d for f in self.tbb_files for d in f[s].keys()
-                    if sb in f[s][d].keys() if int(d[-3:])%2==self.pol]
+                    if sb in f[s][d].keys() if d in self.selected_dipoles]
             available_dipoles.sort()
             if len(available_dipoles)==0:
                 continue
@@ -486,6 +507,7 @@ class BeamFormer:
         max_nblocks = int(floor(filesize / stride / blocklen))
         #nblocks = int(min(max(round(chunklen / blocklen), 1), max_nblocks))
         speclen = len(self.channel_frequencies) #blocklen/2 + 1
+        antenna_set = self.substation
         start_time = 0
         end_time = self.fftdata.shape[0]*5.12e-6 * self.nch
         block_duration = 5.12e-6 * self.nch
@@ -500,7 +522,7 @@ class BeamFormer:
             'chunklen': chunklen,
             'max_nblocks': max_nblocks,
 
-            'antenna_set': 'HBA1',
+            'antenna_set': antenna_set,
             'blocklen': blocklen,
             'nantennas_total': 48,
             'nblocks': nblocks,
@@ -592,10 +614,12 @@ class BeamFormer:
             PIPELINE_NAME = "UNDEFINED",
             BLOCK = 0,
             BLOCKSIZE = "", # 1024
-            clock_offset = 
-                    [md.getClockCorrection(self.station_name,
-                    antennaset='HBA_DUAL', time=t)
-                    for t in self.time_key],
+            clock_offset = [float(md.getClockCorrectionParset(
+                    '/home/veen/scripts/alert/StationCalibration.parset',
+                    self.station_name, self.substation))] * ndipoles,
+                    #[md.getClockCorrection(self.station_name,
+                    #antennaset='HBA_DUAL', time=t)
+                    #for t in self.time_key],
             MAXIMUM_READ_LENGTH = 204800000, # Check
             FFTSIZE = self.fftdata.shape[-1],
             SAMPLE_NUMBER = [177325056] * ndipoles, # Check 177325056
@@ -675,9 +699,13 @@ class BeamFormer:
         self.station = self.bffile.attrs["STATION"]
         self.station_name = self.bffile.attrs["STATION_NAME"]
         self.station_number = self.bffile.attrs["STATION_NUMBER"]
+        self.substation = self.bffile.attrs["SUBSTATION"]
         self.dipoles = self.bffile.attrs["DIPOLE_NAMES"]
         self.subbands = self.bffile.attrs["SUBBANDS"]
 
+        print(md.getClockCorrectionParset(
+                '/home/veen/scripts/alert/StationCalibration.parset',
+                str(self.station_name), str(self.substation)))
         st = list(self.bffile.keys())[0]
 
         #self.subbands = sorted(list(self.bffile[st]['BFDATA'].keys()))
