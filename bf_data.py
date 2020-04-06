@@ -11,7 +11,7 @@ import sys
 import os
 import glob
 from optparse import OptionParser
-import tbb_beamformer_devel as bf
+import tbb_beamformer as bf
 
 #------------------------------------------------------------------------
 # Defining functions
