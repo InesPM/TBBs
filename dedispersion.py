@@ -58,7 +58,7 @@ def dedisperse_array(dynspec, DM, frequencies, timeresolution):
     offsets = freq_to_delay(DM, frequencies, timeresolution)
 
     dshape = dynspec.shape
-    print(dshape)
+    print dshape
     nrfreq = dshape[0]
     nrtime = dshape[1]
     ddshape = [nrtime]
@@ -70,14 +70,13 @@ def dedisperse_array(dynspec, DM, frequencies, timeresolution):
 
     # Check if data can be dispersed at all
     if nrtime < 0:
-        print("Cannot dedisperse data")
+        print "Cannot dedisperse data"
         return dedisp_data
 
     for freq in range(nrfreq):
-        dedisp_data[0:int(nrtime)] += dynspec[int(freq), int(offsets[freq]):int(offsets[freq]) + int(nrtime)]
+        dedisp_data[0:nrtime] += dynspec[freq, int(offsets[freq]):int(offsets[freq]) + nrtime]
 
     return dedisp_data
-
 
 
 def dedisperse_fitsimage(filename, DM, outfilename, nfreq_bands=1, integrationtime=1, rfimitigation=0, fstart=0, fend=None):
@@ -139,8 +138,8 @@ def dedisperse_fitsimage(filename, DM, outfilename, nfreq_bands=1, integrationti
         if 'FREQ' in metadata['CTYPE' + str(ax_nr)]:
             freq_ax_nr = ax_nr
 
-    print("Time axis =", time_ax_nr)
-    print("Freq axis =", freq_ax_nr)
+    print "Time axis =", time_ax_nr
+    print "Freq axis =", freq_ax_nr
     timeresolution = float(metadata['CDELT' + str(time_ax_nr)])
     df = float(metadata['CDELT' + str(freq_ax_nr)])
     f0 = float(metadata['CRVAL' + str(freq_ax_nr)])

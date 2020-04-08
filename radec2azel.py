@@ -35,8 +35,12 @@ def getRADEC_2_AZEL(alpha, delta, utc, angl_offset=0.0):
 
     return pointings
 
-def azel2beamweights(azel,station,freq):
-    antpos=md.getStationCenterRelativeAntennaPosition(station,'HBA_DUAL',True)
+def azel2beamweights(azel,station,freq,antennaset,lofarcentered=False):
+    #antennaset = HBA0, HBA1 or HBA_DUAL
+    if lofarcentered:
+        antpos=md.getLofarCenterRelativeAntennaPosition(station,antennaset,True)
+    else:
+        antpos=md.getStationCenterRelativeAntennaPosition(station,antennaset,True)
     delays=cr.hArray(float, [96])
     pointings=cr.hArray([cr.convert(coords, "CARTESIAN") for coords in azel][0])
     cr.hGeometricDelays(delays, antpos, pointings, True)
@@ -52,5 +56,6 @@ dec=dms2rad(54,34,43.2)
 azel=getRADEC_2_AZEL(ra,dec,t)
 print ra,dec,t,azel
 station="RS106"
+substation='HBA'
 freq=185000000.0#400*0.1953125+100e6
-weights=azel2beamweights(azel,station,freq)
+weights=azel2beamweights(azel,station,freq,substation)
