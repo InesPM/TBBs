@@ -411,8 +411,8 @@ class BeamFormer:
 
         # Defining subbands to loop over. Less subbands for a test
         if self.test :
-            sbs = self.subbands[0:50]
-            self.subbands = self.subbands[0:50]
+            sbs = self.subbands[0:2]
+            self.subbands = self.subbands[0:2]
             self.nsubbands = len(self.subbands)
         else :
             sbs = self.subbands[0:]
@@ -703,9 +703,6 @@ class BeamFormer:
         self.dipoles = self.bffile.attrs["DIPOLE_NAMES"]
         self.subbands = self.bffile.attrs["SUBBANDS"]
 
-        print(md.getClockCorrectionParset(
-                '/home/veen/scripts/alert/StationCalibration.parset',
-                str(self.station_name), str(self.substation)))
         st = list(self.bffile.keys())[0]
 
         #self.subbands = sorted(list(self.bffile[st]['BFDATA'].keys()))
@@ -762,6 +759,61 @@ class BeamFormer:
 
         # Closing beamformed data
         self.bffile.close()
+
+#------------------------------------------------------------------------
+# Beamforming across stations
+#------------------------------------------------------------------------
+
+def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
+    """
+    Using pycrtools function addBeams to beamform across stations.
+    Input
+    files: list of .beam station files
+    tbin: bin time
+    dm: dispersion measure (0 if the data is already dedispersed)
+    incoherent: True if incoherent beam addition, False if coherent 
+    """
+    
+    # Opening files
+    files = glob.glob(filenames)
+    files.sort()
+    print("Reading files", files)
+
+    # Beamforming
+    beams = cr.open(files)
+
+    TAB, dynspec, cleandynspec = bt.addBeams(beams, dyncalc=True, tbin=tbin,
+            dm=dm, clean=True, incoherent=incoherent)
+
+    # Defining output names
+    f = files[0].split('/')[-1].replace('.beam', '').split('_')
+    obs = [l for l in f if 'L' in l][0]
+    pol = [p for p in f if 'pol' in p][0]
+    hba = [h for h in f if 'HBA' in h][0]
+    date = [d for d in f if 'D' in d and 'T' in d][0]
+
+    if outbfdir[-1] != '/':
+        outbfdir = outbfdir + '/'
+
+    tabname = outbfdir+'{0}_{1}_TAB_{2}_{3}'.format(obs, date, hba, pol)
+    dsname  = outbfdir+'{0}_{1}_dynspec_{2}_{3}'.format(obs,date,hba,pol)
+    cdsname = outbfdir+'{0}_{1}_cleandynspec_{2}_{3}'.format(obs,date,hba,pol)
+
+    print("Writing files:")
+    print(tabname, '\n', dsname, '\n', cdsname)
+
+    # Saving beamformed data
+    TAB.write(tabname + '.beam')
+    dynspec.write(dsname + '.beam')
+    cleandynspec.write(cdsname + '.beam')
+
+    npTAB = TAB.toNumpy()
+    npdynspec = dynspec.toNumpy()
+    npcleandynspec = cleandynspec.toNumpy()
+
+    np.save(tabname, npTAB)
+    np.save(dsname,  npdynspec)
+    np.save(cdsname, npcleandynspec)
 
 #------------------------------------------------------------------------
 # End of the script
