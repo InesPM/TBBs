@@ -4,26 +4,26 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 fn = sys.argv[1]
-station = sys.argv[2]
-title = sys.argv[3]
+#station = sys.argv[2]
+#title = sys.argv[3]
 
 path = '/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/'
 out = path + fn.split('/')[-1].replace('.h5', '.png')
-
-#ff=h5py.File('/data/projects/COM_ALERT/tbb/L597863_RS106_D20191023T095157.000Z_tbb.h5')
-
-station='STATION_' + station
+title = fn.split('/')[-1].replace('.h5', '')
 
 ff = h5py.File(fn)
 
-data_arr = []
+station = str(ff.keys()[0])
 
-for kk in ff[station].keys():
-    for jj in ff[station][kk].keys():
-        data_arr.append((ff[station][kk][jj][:].real))
+data_arr = [ff[station][kk][jj][:].real 
+           for kk in ff[station].keys() 
+           for jj in ff[station][kk].keys()]
 data_arr = np.concatenate(data_arr)
-print "# zeros",np.sum((data_arr['real']==0)&(data_arr['imag']==0)),"out of",len(data_arr)," dataloss ",round(100.0*np.sum((data_arr['real']==0)&(data_arr['imag']==0))/len(data_arr),1),"%"
 
+zeros = np.load('/home/marazuela/scripts/zeros.npy')
+#print "# zeros",np.sum((data_arr['real']==0)&(data_arr['imag']==0)),"out of",len(data_arr)," dataloss ",round(100.0*np.sum((data_arr['real']==0)&(data_arr['imag']==0))/len(data_arr),1),"%"
+#print "# zeros",np.sum((data_arr==zeros)),"out of",len(data_arr)," dataloss ",round(100.0*np.sum((data_arr==zeros))/len(data_arr),1),"%"
+print round(100.0*np.sum((data_arr==zeros))/len(data_arr),1)
 
 # Plots
 
