@@ -139,6 +139,13 @@ class BeamFormer:
         self.subbands.sort()
         self.nsubbands = len(self.subbands)
 
+        # Define datalength
+        d0 = self.tbb_files[0][s].keys()[0]
+        sb0 = self.tbb_files[0][s][d0].keys()[0]
+        #TODO: check if this value can we obtained from the header
+        self.datalength = 585000 #len(tbb_files[0][s][d0][sb0])
+        print("datalength ", self.datalength)
+
         #return dipoles, subbands
 
     def __subband_offsets(self, sb):
@@ -259,6 +266,11 @@ class BeamFormer:
 
         sbweight[sbweight==0] = 1
         bfdata /= np.sqrt(sbweight)
+
+        # Zero-padding
+        pad = self.datalength-datalength
+        bfdata = np.append(np.zeros(pad), bfdata)
+        sbweight = np.append(np.zeros(pad), sbweight)
 
         # Create subband dataset
         self.bffile[s]['BFDATA'].create_dataset(sb,data=bfdata)
@@ -411,8 +423,8 @@ class BeamFormer:
 
         # Defining subbands to loop over. Less subbands for a test
         if self.test :
-            sbs = self.subbands[0:2]
-            self.subbands = self.subbands[0:2]
+            sbs = self.subbands[0:]
+            self.subbands = self.subbands[0:]
             self.nsubbands = len(self.subbands)
         else :
             sbs = self.subbands[0:]
