@@ -602,7 +602,6 @@ class BeamFormer:
         f = self.bffile
         ndipoles = f.attrs["NOF_DIPOLE_DATASETS"]
 
-        self.__get_time_hr()
         self.__bf_dictionary()
 
         # Writing data        
