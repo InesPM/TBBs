@@ -30,29 +30,52 @@ class BeamFormer:
     """
     Beamforming TBB data for one station.
     ---
-    infile:     list of .h5 files with TBB data of one station
-    bffilename: name of the output beamformed .h5 file
-    pol:        polarization to beamform (0|1)
-    substation: substation to beamform. 
-                (HBA0|HBA1) for core stations. HBA for remote stations.
-    offset_max_allowed: maximum dipole offset in time bins to be allowed.
-    lofar_centered: beamforming station with respect to the LOFAR center
-                    (default) or station centered.
-    overwrite: remove output files if they previously exist.
-    test:           only a few subbands are beamformed to check that there are
-                    no errors.
+    INPUTS
+
+    infile:             List of .h5 files with TBB data of one station.
+    bffilename:         Name of the output beamformed .h5 file.
+    pol:                Polarization to beamform (0|1)
+    substation:         Substation to beamform. 
+                        (HBA0|HBA1) for core stations. HBA for remote stations.
+    offset_max_allowed: Maximum dipole offset in time bins to be allowed.
+    lofar_centered:     Beamforming station with respect to the LOFAR center
+                        (default) or station centered.
+    reftime:            Reference start time of the ob. computed for all 
+                        stations.
+    dm:                 Dispersion measure used to freeze the data.
+    overwrite:          Remove output files if they previously exist.
+    test:               Only a few subbands are beamformed to check that there 
+                        are no errors.
+    ---
+    MAIN FUNCTIONS
+
+    beamforming:        Beamforming TBB data, output in .h5 format
+    convert2beam:       FFTing beamformed data, output in .beam format that 
+                        can be beamformed across stations with the pycrtools 
+                        addBeams function. 
+                        To use once the beamformed .h5 data exists.
     ---
     """
 
     def __init__(self, infile, bffilename, 
             pol=0, substation='HBA', offset_max_allowed=400, 
-            lofar_centered=True, overwrite=True, test=False):
+            lofar_centered=True, reftime=None, dm=0.0, overwrite=True, 
+            test=False):
         
         # Input h5py data
         self.infile = infile #h5py.File(infile,'r')
 
         # Output filename
         self.bffilename = bffilename # TODO: Replace by bffile
+
+        # Reference time
+        if reftime:
+            self.reftime = reftime
+            self.time_key = int(np.floor(reftime))
+            self.time_hr = datetime.fromtimestamp(reftime).strftime(
+                    "%Y-%m-%d %H:%M:%S")
+            self.sample_number = int((reftime%1)/(5e-9))
+            self.slice = (reftime%1)
 
         # Other inputs
         self.overwrite = overwrite
@@ -61,6 +84,7 @@ class BeamFormer:
         self.substation = substation
         self.offset_max_allowed = offset_max_allowed
         self.lofar_centered = lofar_centered
+        self.dm = dm
         print("LOFAR centered:", lofar_centered)
 
     #-------------------------------------------------------------------
@@ -137,11 +161,11 @@ class BeamFormer:
         self.bffile[s].create_group('BFDATA')
 
     def read_calibration(self,  
-            caltabledir='/data/holography/Holog-20191212-1130/caltables/'):
+            caltabledir='/data/holography/Holog-20191212-1130/caltables/',
+            parsetname='/home/veen/scripts/alert/StationCalibration.parset'):
         """Reading calibration tables"""
 
-        # TODO: check this
-        
+        # Reading calibration table
         filter_selection = (self.tbb_files[0].attrs[u'FILTER_SELECTION']
                 .replace('A_','A-'))
         caltablename = (caltabledir + "CalTable-" + "" 
@@ -149,6 +173,10 @@ class BeamFormer:
                 + '-' + filter_selection + '.dat')
         caltable = ct.readTable(caltablename)[1]
         
+        # Reading clock offset
+        self.clock_offset = float(md.getClockCorrectionParset(parsetname,
+                self.station_name, antennaset=self.substation))
+ 
         return caltable        
 
     def __dipole_in_selection(self, dipole):
@@ -156,9 +184,7 @@ class BeamFormer:
         if self.substation=='HBA0':
             if d%2 == self.pol and d<48: return True
         if self.substation=='HBA1':
-            if d%2 == self.pol and d>=48: 
-                print("Selecting dipole", d)
-                return True
+            if d%2 == self.pol and d>=48: return True
         if self.substation=='HBA':
             if d%2 == self.pol: return True
         return False
@@ -206,48 +232,94 @@ class BeamFormer:
         s = self.station
 
         # Select all dipoles with the given subband for the given polarisation
-        available_dipoles = [str(d) for f in self.tbb_files for d in f[s].keys() 
+        available_dipoles = [str(d) for f in self.tbb_files for d in f[s].keys()
                 if sb in f[s][d] 
                 if d in self.selected_dipoles]
         available_dipoles.sort()
-
-        # Calculating offsets
+     
+        # Calculating start time from offset
         d0 = available_dipoles[0]
-        #num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
         num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
+
+        frequency = self.tbb_files[num][s][d0][sb].attrs['CENTRAL_FREQUENCY']
         timeresolution = self.tbb_files[num][s][d0][sb].attrs['TIME_RESOLUTION']
-        starttimes = [(f[s][d][sb].attrs['TIME'], 
-                timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
+
+        dm_delay = dd.freq_to_delay(self.dm, np.array([frequency,2e9]))[0]
+        sb_starttime = self.reftime + self.clock_offset + dm_delay
+        print(sb_starttime)
+ 
+        # Starttimes from files
+        starttimes = [f[s][d][sb].attrs['TIME']+
+                timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']
                 for i,f in enumerate(self.tbb_files)
                 for d in self.dipoles[i] if d in available_dipoles]
-        datalengths = [f[s][d][sb].shape[0] 
+        print(starttimes)
+        datalengths = [f[s][d][sb].shape[0]
                 for i,f in enumerate(self.tbb_files)
                 for d in self.dipoles[i] if d in available_dipoles]
 
-        minstarttime = min(starttimes)
-        maxstarttime = max(starttimes)
+        if min(starttimes) > sb_starttime:
+            print("ERROR: min starttime > subband reftime", s, sb)
+            #sys.exit()
+
+        minstarttime = (int(np.floor(min(starttimes))), 
+                int(min(starttimes)%1/timeresolution))
+        maxstarttime = (int(np.floor(max(starttimes))), 
+                int(max(starttimes)%1/timeresolution))
         diffstarttimes = (maxstarttime[0] - minstarttime[0] 
                 + maxstarttime[1] - minstarttime[1]) / timeresolution
 
-        offsets2  = [int(ceil(((st[0] - minstarttime[0]) + 
-                (st[1]-minstarttime[1])) / timeresolution)) 
+        # Calculating offsets
+        offsets2  = [int(ceil((st - sb_starttime) / timeresolution))
                 for st in starttimes]
-        flag_offsets = [num for num,o in enumerate(offsets2) 
-                if o > self.offset_max_allowed]
-        available_dipoles = [d for num,d in enumerate(available_dipoles) 
-                if num not in flag_offsets]
-        starttimes = [(f[s][d][sb].attrs['TIME'], 
-                timeresolution * f[s][d][sb].attrs['SLICE_NUMBER']) 
-                for i,f in enumerate(self.tbb_files) 
-                for d in self.dipoles[i] 
-                if d in available_dipoles]
-        minstarttime = min(starttimes)
-        maxstarttime = max(starttimes)
-
-        offsets = [int(ceil((maxstarttime[0] - st[0] 
-                + maxstarttime[1] - st[1])/timeresolution)) 
-                for st in starttimes]
+        print(offsets2)
+        flag_offsets = [i for i,o in enumerate(offsets2) if o > 0]
+        print(flag_offsets)
+        available_dipoles = [d for i,d in enumerate(available_dipoles)
+                if i not in flag_offsets]
+        offsets = [-o for i,o in enumerate(offsets2) if i not in flag_offsets]
+        print(offsets)
         datalength = min(datalengths) - max(offsets)
+
+        
+
+        ## OLD
+        # Calculating offsets
+        #d0 = available_dipoles[0]
+        #num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
+        #timeresolution=self.tbb_files[num][s][d0][sb].attrs['TIME_RESOLUTION']
+        #starttimes = [(f[s][d][sb].attrs['TIME'], 
+        #        timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
+        #        for i,f in enumerate(self.tbb_files)
+        #        for d in self.dipoles[i] if d in available_dipoles]
+        #datalengths = [f[s][d][sb].shape[0] 
+        #        for i,f in enumerate(self.tbb_files)
+        #        for d in self.dipoles[i] if d in available_dipoles]
+
+        #minstarttime = min(starttimes)
+        #maxstarttime = max(starttimes)
+        #diffstarttimes = (maxstarttime[0] - minstarttime[0] 
+        #        + maxstarttime[1] - minstarttime[1]) / timeresolution
+
+        #offsets2  = [int(ceil(((st[0] - minstarttime[0]) + 
+        #        (st[1]-minstarttime[1])) / timeresolution)) 
+        #        for st in starttimes]
+        #flag_offsets = [num for num,o in enumerate(offsets2) 
+        #        if o > self.offset_max_allowed]
+        #available_dipoles = [d for num,d in enumerate(available_dipoles) 
+        #        if num not in flag_offsets]
+        #starttimes = [(f[s][d][sb].attrs['TIME'], 
+        #        timeresolution * f[s][d][sb].attrs['SLICE_NUMBER']) 
+        #        for i,f in enumerate(self.tbb_files) 
+        #        for d in self.dipoles[i] 
+        #        if d in available_dipoles]
+        #minstarttime = min(starttimes)
+        #maxstarttime = max(starttimes)
+
+        #offsets = [int(ceil((maxstarttime[0] - st[0] 
+        #        + maxstarttime[1] - st[1])/timeresolution)) 
+        #        for st in starttimes]
+        #datalength = min(datalengths) - max(offsets)
 
         return offsets, available_dipoles, datalength
 
@@ -385,7 +457,6 @@ class BeamFormer:
             'SAMPLES_PER_FRAME': fds.attrs['SAMPLES_PER_FRAME'], 
             'TIME_RESOLUTION_UNIT': fds.attrs['TIME_RESOLUTION_UNIT'],
             'DATA_LENGTH': fds.attrs['DATA_LENGTH'], 
-            'TIME': fds.attrs['TIME'],
             'BANDWIDTH': fds.attrs['BANDWIDTH'],
 
             # TODO: Add keywords from original attribute list
@@ -417,6 +488,10 @@ class BeamFormer:
             'SAMPLE_FREQUENCY_VALUE': 200.0,
             'BANDWIDTH': self.bandwidth,
             'BANDWIDTH_UNIT': self.bandwidth_unit,
+            'TIME': self.time_key,
+            'TIME_HR': self.time_hr,
+            'SAMPLE_NUMBER': self.sample_number, 
+            'SLICE_NUMBER': int(self.slice/fds.attrs['TIME_RESOLUTION']),
 
             #'CLOCK_FREQUENCY_UNIT': ,
             'SAMPLE_INTERVAL': 5e-9,
@@ -478,7 +553,7 @@ class BeamFormer:
         # Creating output data groups
         self.__data_groups()
 
-        # Read calibration tables. 
+        # Read calibration tables and clock offsets 
         caltable = self.read_calibration()
 
         # Selecting dipoles and subbands
@@ -666,6 +741,10 @@ class BeamFormer:
             SELECTED_DIPOLES = f.attrs["SELECTED_DIPOLES"],
             SELECTED_DIPOLES_INDEX = range(ndipoles),
             CHANNEL_ID = f.attrs["CHANNEL_ID"],
+            TIME = f.attrs["TIME"] * ndipoles,
+            TIME_HR = f.attrs["TIME_HR"] * ndipoles,
+            SAMPLE_NUMBER = f.attrs["SAMPLE_NUMBER"] * ndipoles,
+            SLICE_NUMBER = f.attrs["SLICE_NUMBER"] * ndipoles,
             SAMPLE_FREQUENCY = [f.attrs["SAMPLE_FREQUENCY"]] * ndipoles,
             SAMPLE_FREQUENCY_UNIT = 
                     [str(f.attrs["SAMPLE_FREQUENCY_UNIT"])] * ndipoles,
@@ -691,22 +770,14 @@ class BeamFormer:
             clock_offset = [float(md.getClockCorrectionParset(
                     '/home/veen/scripts/alert/StationCalibration.parset',
                     self.station_name, self.substation))] * ndipoles,
-                    #[md.getClockCorrection(self.station_name,
-                    #antennaset='HBA_DUAL', time=t)
-                    #for t in self.time_key],
             MAXIMUM_READ_LENGTH = 204800000, # Check
             FFTSIZE = self.fftdata.shape[-1],
-            SAMPLE_NUMBER = [177325056] * ndipoles, # Check 177325056
             NYQUIST_ZONE = [2] * ndipoles,
             FREQUENCY_RANGE = "", # [(100000000.0, 200000000.0)] * 96
             PIPELINE_VERSION = "UNDEFINED",
 
             # Derived keywords that are less relevant
             TIMESERIES_DATA = "", # Check
-            #"EMPTY_FFT_DATA = cr.hArray(Type=complex, name="fft(E-Field)")
-            #"CABLE_ATTENUATION =
-            TIME_HR = self.time_hr,
-            TIME = self.time_key,
             ANTENNA_POSITION = "",
                     #  [3826575.52551, 460961.8472, 5064899.465]*96
             NOF_STATION_GROUPS = 1, # Check
