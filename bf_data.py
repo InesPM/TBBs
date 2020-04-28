@@ -1,5 +1,3 @@
-from __future__ import print_function
-from __future__ import division
 import h5py
 import pycrtools as cr
 import numpy as np
@@ -34,7 +32,7 @@ def findstem(arr):
                 res = stem
     return res
 
-def outfilenames(outfiledir, files, pol, subs, test=False):
+def outfilenames(outfiledir, files, pol, subs, lofarcentered, test=False):
     """Defining output file names"""
 
     # Checking number of input files
@@ -52,27 +50,33 @@ def outfilenames(outfiledir, files, pol, subs, test=False):
     # Creating output directories
     try:
         os.mkdir(outfiledir + obsdir)
-        print("Directory", outfiledir + obsdir, "created")
+        print "Directory", outfiledir + obsdir, "created"
     except:
-        print("Directory", outfiledir + obsdir, "already exists")
+        print "Directory", outfiledir + obsdir, "exists"
 
     bffiledir = outfiledir + obsdir + '/bfh5_data/'
     try:
         os.mkdir(bffiledir)
-        print("Directory", bffiledir, "created")
+        print "Directory", bffiledir, "created"
     except:
-        print("Directory", bffiledir, "already exists")
+        print "Directory", bffiledir, "exists"
 
     beamfiledir = outfiledir + obsdir + '/beam_data/'
     try:
         os.mkdir(beamfiledir)
-        print("Directory", beamfiledir, "created")
+        print "Directory", beamfiledir, "created"
     except:
-        print("Directory", beamfiledir, "already exists")
+        print "Directory", beamfiledir, "exists"
+
+    # LOFAR centered?
+    if lofarcentered:
+        suffix = 'LOFAR_centered_'+str(subs)+'_pol'+str(pol)
+    else:
+        suffix = 'STATION_centered_'+str(subs)+'_pol'+str(pol)
 
     # Defining file names
-    outbf = bffiledir + fname + '_bf_'+str(subs)+'_pol'+str(pol)+'.h5'
-    outdynspec = beamfiledir + fname + '_fft_'+str(subs)+'_pol'+str(pol)+'.beam'
+    outbf = bffiledir + fname + '_bf_' + suffix + '.h5'
+    outdynspec = beamfiledir + fname + '_fft_' + suffix + '.beam'
     return outbf, outdynspec
 
 #------------------------------------------------------------------------
@@ -99,8 +103,19 @@ parser.add_option("-f", "--outfiledir", type="str",
         dest="outfiledir")
 parser.add_option("-t", "--test", action="store_true", 
         help="Test script by beamforming with 2 subbands", dest="test")
+parser.add_option("-n", "--number-channels", type="int", dest="nch",
+        help="Number of channels per frequency subband.", default=32)
+parser.add_option("-i", "--time-integration", dest="t_int", type="int", 
+        help="t_int to use in convert2beam.", default=32)
+parser.add_option("-c", "--station-centered", dest="stationcentered", 
+        help=("If provided, station centered. Default: LOFAR centered"),
+        action="store_false", default=True)
+
 
 (options, args) = parser.parse_args()
+
+# LOFAR centered
+lofarcentered = options.stationcentered
 
 # Input file
 files = []
@@ -124,17 +139,23 @@ assert(pol in [0,1])
 offset_max_allowed = options.offset_max_allowed
 
 # Defining output file names
-bffilename, dsfilename = outfilenames(options.outfiledir, files, pol, subs, test=options.test)
+bffilename, dsfilename = outfilenames(options.outfiledir, files, pol, subs, 
+        lofarcentered, test=options.test)
 
 #------------------------------------------------------------------------
 # Beamforming
 #------------------------------------------------------------------------
 
 b = bf.BeamFormer(infile=files, bffilename=bffilename, pol=pol, 
-    substation=options.substation, offset_max_allowed=offset_max_allowed, 
-    test=options.test, overwrite=True)
+        substation=options.substation, offset_max_allowed=offset_max_allowed,
+        lofar_centered=lofarcentered, test=options.test, 
+        overwrite=True)
+
+print "Writing file", bffilename
 b.beamforming()
-b.convert2beam(dsfilename)
+
+print "Writing file", dsfilename
+b.convert2beam(dsfilename, nch=options.nch, t_int=options.t_int)
 
 print("File written: ", bffilename)
 print("File written: ", dsfilename)

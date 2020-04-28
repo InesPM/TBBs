@@ -27,11 +27,26 @@ def utc2jd(utctimestamp):
     return tools.strdate2jd(timestring)
 
 class BeamFormer:
-    
+    """
+    Beamforming TBB data for one station.
+    ---
+    infile:     list of .h5 files with TBB data of one station
+    bffilename: name of the output beamformed .h5 file
+    pol:        polarization to beamform (0|1)
+    substation: substation to beamform. 
+                (HBA0|HBA1) for core stations. HBA for remote stations.
+    offset_max_allowed: maximum dipole offset in time bins to be allowed.
+    lofar_centered: beamforming station with respect to the LOFAR center
+                    (default) or station centered.
+    overwrite: remove output files if they previously exist.
+    test:           only a few subbands are beamformed to check that there are
+                    no errors.
+    ---
+    """
 
     def __init__(self, infile, bffilename, 
-            pol=0, substation='HBA', offset_max_allowed=400, overwrite=True,
-            test=False):
+            pol=0, substation='HBA', offset_max_allowed=400, 
+            lofar_centered=True, overwrite=True, test=False):
         
         # Input h5py data
         self.infile = infile #h5py.File(infile,'r')
@@ -45,9 +60,24 @@ class BeamFormer:
         self.pol = pol
         self.substation = substation
         self.offset_max_allowed = offset_max_allowed
+        self.lofar_centered = lofar_centered
+        print("LOFAR centered:", lofar_centered)
 
     #-------------------------------------------------------------------
     # Internal functions called by the beamformer
+
+    def __open_tbb_files(self):
+        """Opening TBB files"""
+
+        self.tbb_files = []
+        for f in self.infile :
+            try:
+                tbb_file = h5py.File(f, 'r')
+                self.tbb_files.append(tbb_file)
+                print(tbb_file[tbb_file.keys()[0]])
+            except:
+                print("Unable to open file ", f)
+
 
     def __station_selection(self):
         """Selecting station from input file keywords."""
@@ -70,16 +100,25 @@ class BeamFormer:
 
         # Checking that all attributes are the same
         for k in self.tbb_files[0].attrs.keys() :
-            if 'FILENAME' not in k :
+            if k not in ['FILENAME', 'FILEDATE'] :
+                attributes = []
+                for f in self.tbb_files:
+                    try:
+                        attributes.append(f.attrs[k])
+                    except:
+                        print("Failed to open attribute ",k, "in file ",f)
                 try:
-                    if not all(f.attrs[k] == self.tbb_files[0].attrs[k] 
-                           for f in self.tbb_files):
+                    attributes = []
+                    if not all(attr == self.tbb_files[0].attrs[k] 
+                           for attr in attributes):
                         print("ERROR: Attribute ",k, " not matching every file")
+                        print([f.attrs[k] for f in self.tbb_files])
                         sys.exit()
                 except:
-                    if not all(f.attrs[k][i] == att for f in self.tbb_files 
+                    if not all(attributes[i] == att for f in self.tbb_files 
                            for i,att in enumerate(self.tbb_files[0].attrs[k])):
                         print("ERROR: Attribute ",k, " not matching every file")
+                        print([f.attrs[k] for f in self.tbb_files])
                         sys.exit()
 
         # Keywords from input file
@@ -108,7 +147,7 @@ class BeamFormer:
         caltablename = (caltabledir + "CalTable-" + "" 
                 + "{:03d}".format(self.station_number) 
                 + '-' + filter_selection + '.dat')
-        caltable=ct.readTable(caltablename)[1]
+        caltable = ct.readTable(caltablename)[1]
         
         return caltable        
 
@@ -117,7 +156,9 @@ class BeamFormer:
         if self.substation=='HBA0':
             if d%2 == self.pol and d<48: return True
         if self.substation=='HBA1':
-            if d%2 == self.pol and d>=48: return True
+            if d%2 == self.pol and d>=48: 
+                print("Selecting dipole", d)
+                return True
         if self.substation=='HBA':
             if d%2 == self.pol: return True
         return False
@@ -127,15 +168,21 @@ class BeamFormer:
 
         s = self.station
         # Selecting dipoles
-        self.dipoles = [f[s].keys() for f in self.tbb_files]
+        self.dipoles = [[str(d) for d in f[s].keys()] for f in self.tbb_files]
         self.selected_dipoles = [d for dip in self.dipoles for d in dip 
                 if self.__dipole_in_selection(d)]
         self.selected_dipoles.sort()
         self.ndipoles = len(self.selected_dipoles)
 
+
+        # Checking if there are dipoles
+        if self.ndipoles == 0:
+            print("ERROR: No dipoles selected for",self.station,self.substation)
+            sys.exit() 
+
         # Select subbands
-        self.subbands = np.unique(np.concatenate([f[s][d].keys() 
-                        for f in self.tbb_files for d in f[s].keys()]))
+        self.subbands = np.unique([str(sb) for sb in f[s][d].keys() 
+                for f in self.tbb_files for d in f[s].keys()])
         self.subbands.sort()
         self.nsubbands = len(self.subbands)
 
@@ -146,6 +193,11 @@ class BeamFormer:
         self.datalength = 585000 #len(tbb_files[0][s][d0][sb0])
         print("datalength ", self.datalength)
 
+        # Define bandwidth
+        self.bandwidth = (self.tbb_files[0][s][d0][sb0].attrs['BANDWIDTH'])
+        self.bandwidth_unit = (self.tbb_files[0][s][d0][sb0]
+                .attrs['BANDWIDTH_UNIT'])
+
         #return dipoles, subbands
 
     def __subband_offsets(self, sb):
@@ -154,14 +206,15 @@ class BeamFormer:
         s = self.station
 
         # Select all dipoles with the given subband for the given polarisation
-        available_dipoles = [d for f in self.tbb_files for d in f[s].keys() 
+        available_dipoles = [str(d) for f in self.tbb_files for d in f[s].keys() 
                 if sb in f[s][d] 
                 if d in self.selected_dipoles]
         available_dipoles.sort()
 
         # Calculating offsets
         d0 = available_dipoles[0]
-        num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
+        #num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
+        num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
         timeresolution = self.tbb_files[num][s][d0][sb].attrs['TIME_RESOLUTION']
         starttimes = [(f[s][d][sb].attrs['TIME'], 
                 timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
@@ -227,20 +280,23 @@ class BeamFormer:
         bfdata = np.zeros(shape = (datalength,), dtype = np.complex)
         sbdata_complex = np.zeros(shape = (datalength,), dtype=np.complex)
         d0 = available_dipoles[0]
-        num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
+        #num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
+        num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
 
         # Calculate time for the weights. 
         t = utc2jd(self.tbb_files[num][s][d0][sb].attrs['TIME'])
         weights = azel2beamweights(getRADEC_2_AZEL(ra,dec,t), 
                 self.station_name, 
                 self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY'],
-                self.substation).toNumpy()
+                self.substation, lofarcentered=self.lofar_centered).toNumpy()
         ndipoles = len(available_dipoles) 
 
         # The beamforming part
         sbweight = np.zeros(shape = datalength)
         for d,o in zip(available_dipoles, offsets):
-            board = np.where(np.char.find(self.dipoles, d) != -1)[0][0]
+            #board = np.where(np.char.find(self.dipoles, d) != -1)[0][0]
+            board = [i for i,dipgroup in enumerate(self.dipoles) 
+                    for dip in dipgroup if d==dip][0]
             f = self.tbb_files[board]
             if d in ['DIPOLE_145000000','DIPOLE_145000002']:
                 continue
@@ -268,9 +324,9 @@ class BeamFormer:
         bfdata /= np.sqrt(sbweight)
 
         # Zero-padding
-        pad = self.datalength-datalength
-        bfdata = np.append(np.zeros(pad), bfdata)
-        sbweight = np.append(np.zeros(pad), sbweight)
+        #pad = self.datalength-datalength
+        #bfdata = np.append(np.zeros(pad), bfdata)
+        #sbweight = np.append(np.zeros(pad), sbweight)
 
         # Create subband dataset
         self.bffile[s]['BFDATA'].create_dataset(sb,data=bfdata)
@@ -282,7 +338,8 @@ class BeamFormer:
 
         s = self.station
         d0 = available_dipoles[0]
-        num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]  
+        #num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]  
+        num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
         
         # TODO: check that all files have same attributes
         for k in list(self.tbb_files[num][s][d0][sb].attrs):
@@ -320,6 +377,7 @@ class BeamFormer:
 
             # Keywords replaced from input file
             'FILENAME': self.bffilename.split('/')[-1],
+            'FILEDATE': self.filedate,
 
             # Keywords from data attributes
             'TIME_RESOLUTION': fds.attrs['TIME_RESOLUTION'],
@@ -357,9 +415,9 @@ class BeamFormer:
             'SAMPLE_FREQUENCY': 200000000.0,
             'SAMPLE_FREQUENCY_UNIT': f.attrs["CLOCK_FREQUENCY_UNIT"], 
             'SAMPLE_FREQUENCY_VALUE': 200.0,
-            'BANDWIDTH': 
-                    self.bffile[self.station]['BFDATA'][self.subbands[0]]
-                    .attrs['BANDWIDTH'], # Check this
+            'BANDWIDTH': self.bandwidth,
+            'BANDWIDTH_UNIT': self.bandwidth_unit,
+
             #'CLOCK_FREQUENCY_UNIT': ,
             'SAMPLE_INTERVAL': 5e-9,
             'SAMPLE_INTERVAL_UNIT': 's',
@@ -400,11 +458,16 @@ class BeamFormer:
             if os.path.exists(self.bffilename):
                 os.remove(self.bffilename)
         self.bffile = h5py.File(self.bffilename,'w')
+        self.filedate = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
         # Opening input data
-        self.tbb_files = []
-        for f in self.infile :
-            self.tbb_files.append(h5py.File(f, 'r'))
+        self.__open_tbb_files()
+#        self.tbb_files = []
+#        for f in self.infile :
+#            try:
+#                self.tbb_files.append(h5py.File(f, 'r'))
+#            except:
+#                print("Unable to open file ", f)
 
         # Defining stations
         self.__station_selection() 
@@ -423,8 +486,8 @@ class BeamFormer:
 
         # Defining subbands to loop over. Less subbands for a test
         if self.test :
-            sbs = self.subbands[0:]
-            self.subbands = self.subbands[0:]
+            sbs = self.subbands[0:2]
+            self.subbands = self.subbands[0:2]
             self.nsubbands = len(self.subbands)
         else :
             sbs = self.subbands[0:]
@@ -432,7 +495,8 @@ class BeamFormer:
         # Loop over subbands
         for sb in sbs:
 
-            print ("Subband {}/{}".format(sb, sbs[-1]))
+            print ("{} POL{} {} Subband {}/{}".format(self.station, self.pol,
+                    self.substation, sb, sbs[-1]))
             sys.stdout.write("\033[F") # Cursor up one line
 
             # Select all dipoles with the given subband and given polarisation
@@ -477,9 +541,7 @@ class BeamFormer:
         """
 
         s = self.station
-        self.tbb_files = []
-        for f in self.infile :
-            self.tbb_files.append(h5py.File(f, 'r'))
+        self.__open_tbb_files()
 
         self.time_hr = []
         self.time_key = []
@@ -491,7 +553,7 @@ class BeamFormer:
                 tr = f[s][d][sbs[-1]].attrs['TIME_RESOLUTION']
                 t0 = (f[s][d][sbs[-1]].attrs['TIME'] 
                         + tr * f[s][d][sbs[-1]].attrs['SLICE_NUMBER'])
-                f1 = f[s][d][sbs[-1]].attrs[u'CENTRAL_FREQUENCY']
+                f1 = f[s][d][sbs[-1]].attrs['CENTRAL_FREQUENCY']
 
                 t = self.dedispersed_time(t0, f1)
                 self.time_key.append(int(t))
