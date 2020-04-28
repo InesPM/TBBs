@@ -246,14 +246,12 @@ class BeamFormer:
 
         dm_delay = dd.freq_to_delay(self.dm, np.array([frequency,2e9]))[0]
         sb_starttime = self.reftime + self.clock_offset + dm_delay
-        print(sb_starttime)
  
         # Starttimes from files
         starttimes = [f[s][d][sb].attrs['TIME']+
                 timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']
                 for i,f in enumerate(self.tbb_files)
                 for d in self.dipoles[i] if d in available_dipoles]
-        print(starttimes)
         datalengths = [f[s][d][sb].shape[0]
                 for i,f in enumerate(self.tbb_files)
                 for d in self.dipoles[i] if d in available_dipoles]
@@ -272,54 +270,11 @@ class BeamFormer:
         # Calculating offsets
         offsets2  = [int(ceil((st - sb_starttime) / timeresolution))
                 for st in starttimes]
-        print(offsets2)
         flag_offsets = [i for i,o in enumerate(offsets2) if o > 0]
-        print(flag_offsets)
         available_dipoles = [d for i,d in enumerate(available_dipoles)
                 if i not in flag_offsets]
         offsets = [-o for i,o in enumerate(offsets2) if i not in flag_offsets]
-        print(offsets)
         datalength = min(datalengths) - max(offsets)
-
-        
-
-        ## OLD
-        # Calculating offsets
-        #d0 = available_dipoles[0]
-        #num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
-        #timeresolution=self.tbb_files[num][s][d0][sb].attrs['TIME_RESOLUTION']
-        #starttimes = [(f[s][d][sb].attrs['TIME'], 
-        #        timeresolution*f[s][d][sb].attrs['SLICE_NUMBER']) 
-        #        for i,f in enumerate(self.tbb_files)
-        #        for d in self.dipoles[i] if d in available_dipoles]
-        #datalengths = [f[s][d][sb].shape[0] 
-        #        for i,f in enumerate(self.tbb_files)
-        #        for d in self.dipoles[i] if d in available_dipoles]
-
-        #minstarttime = min(starttimes)
-        #maxstarttime = max(starttimes)
-        #diffstarttimes = (maxstarttime[0] - minstarttime[0] 
-        #        + maxstarttime[1] - minstarttime[1]) / timeresolution
-
-        #offsets2  = [int(ceil(((st[0] - minstarttime[0]) + 
-        #        (st[1]-minstarttime[1])) / timeresolution)) 
-        #        for st in starttimes]
-        #flag_offsets = [num for num,o in enumerate(offsets2) 
-        #        if o > self.offset_max_allowed]
-        #available_dipoles = [d for num,d in enumerate(available_dipoles) 
-        #        if num not in flag_offsets]
-        #starttimes = [(f[s][d][sb].attrs['TIME'], 
-        #        timeresolution * f[s][d][sb].attrs['SLICE_NUMBER']) 
-        #        for i,f in enumerate(self.tbb_files) 
-        #        for d in self.dipoles[i] 
-        #        if d in available_dipoles]
-        #minstarttime = min(starttimes)
-        #maxstarttime = max(starttimes)
-
-        #offsets = [int(ceil((maxstarttime[0] - st[0] 
-        #        + maxstarttime[1] - st[1])/timeresolution)) 
-        #        for st in starttimes]
-        #datalength = min(datalengths) - max(offsets)
 
         return offsets, available_dipoles, datalength
 
@@ -537,12 +492,6 @@ class BeamFormer:
 
         # Opening input data
         self.__open_tbb_files()
-#        self.tbb_files = []
-#        for f in self.infile :
-#            try:
-#                self.tbb_files.append(h5py.File(f, 'r'))
-#            except:
-#                print("Unable to open file ", f)
 
         # Defining stations
         self.__station_selection() 
@@ -599,45 +548,6 @@ class BeamFormer:
 
     #-------------------------------------------------------------------
     # FFT related functions
-
-    def dedispersed_time(self, t0, f1, f2=0.2):
-        """
-        Getting dedispersed time for given time and frequency subband
-        """
-        f1 = f1*1e-9 # GHz
-        t = 4.15e-3 * self.dm * (1/f1**2 - 1/f2**2)
-
-        return t0-t
-
-    def __get_time_hr(self):
-        """
-        Getting the 'TIME_HR' header keyword from the input data.
-        Dedispersing to the reference frequency 200 MHz
-        """
-
-        s = self.station
-        self.__open_tbb_files()
-
-        self.time_hr = []
-        self.time_key = []
-        self.sample_number = []
-
-        for f in self.tbb_files:
-            for d in f[s].keys():
-                sbs = f[s][d].keys()
-                tr = f[s][d][sbs[-1]].attrs['TIME_RESOLUTION']
-                t0 = (f[s][d][sbs[-1]].attrs['TIME'] 
-                        + tr * f[s][d][sbs[-1]].attrs['SLICE_NUMBER'])
-                f1 = f[s][d][sbs[-1]].attrs['CENTRAL_FREQUENCY']
-
-                t = self.dedispersed_time(t0, f1)
-                self.time_key.append(int(t))
-
-                tstr = datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M:%S")
-                self.time_hr.append(tstr)
-
-                samplenum = int((t - floor(t))/5e-9)
-                self.sample_number.append(samplenum)
 
     def __bf_dictionary(self):
         """
