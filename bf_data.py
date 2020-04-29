@@ -77,7 +77,7 @@ def outfilenames(outfiledir, files, pol, subs, lofarcentered, test=False):
     # Defining file names
     outbf = bffiledir + fname + '_bf_' + suffix + '.h5'
     outdynspec = beamfiledir + fname + '_fft_' + suffix + '.beam'
-    return outbf, outdynspec
+    return outfiledir+obsdir, outbf, outdynspec
 
 #------------------------------------------------------------------------
 # Command line options
@@ -90,6 +90,8 @@ parser.add_option("-r", "--right_ascension", dest="ra", type="float",
 parser.add_option("-d", "--declination", dest="dec", type="float", 
         default=0.952579228492, 
         help="Declination of the source. Default Dec: B0329")
+parser.add_option("--dm", "--dispersion-measure", dest="dm", type="float", 
+        default=26.8, help="Dispersion measure.")
 parser.add_option("-p", "--polarisation", dest="pol", type="int", default=0,
         help="Polarisation to beamform.")
 parser.add_option("-s", "--substation", dest="substation", type="str", 
@@ -121,7 +123,6 @@ lofarcentered = options.stationcentered
 files = []
 for f in args[:]:
     files.append(glob.glob(f)[0])
-#files=glob.glob(args[:])
 files.sort()
 files.insert(0, files.pop(-1))
 print('Opening following files:')
@@ -139,17 +140,25 @@ assert(pol in [0,1])
 offset_max_allowed = options.offset_max_allowed
 
 # Defining output file names
-bffilename, dsfilename = outfilenames(options.outfiledir, files, pol, subs, 
-        lofarcentered, test=options.test)
+obsdir, bffilename, dsfilename = outfilenames(options.outfiledir, files, pol, 
+        subs, lofarcentered, test=options.test)
 
 #------------------------------------------------------------------------
 # Beamforming
 #------------------------------------------------------------------------
 
+# Extracting reference time
+try:
+    reftime = np.load(obsdir+'/reftime.npy')
+except:
+    print "Reftime", obsdir+'reftime.npy', "not found"
+    sys.exit()
+
+# Beamforming
 b = bf.BeamFormer(infile=files, bffilename=bffilename, pol=pol, 
         substation=options.substation, offset_max_allowed=offset_max_allowed,
-        lofar_centered=lofarcentered, test=options.test, 
-        overwrite=True)
+        lofar_centered=lofarcentered, reftime=reftime, dm=options.dm,
+        test=options.test, overwrite=True)
 
 print "Writing file", bffilename
 b.beamforming()
