@@ -86,10 +86,10 @@ parser = OptionParser()
 
 parser.add_option("-r", "--right_ascension", dest="ra", type="float", 
         default=0.92934186635, 
-        help="Right ascension of the source in degrees. Default RA: B0329")
+        help="Right ascension of the source in radians. Default RA: B0329")
 parser.add_option("-d", "--declination", dest="dec", type="float", 
         default=0.952579228492, 
-        help="Declination of the source. Default Dec: B0329")
+        help="Declination of the source in radians. Default Dec: B0329")
 parser.add_option("--dm", "--dispersion-measure", dest="dm", type="float", 
         default=26.8, help="Dispersion measure.")
 parser.add_option("-p", "--polarisation", dest="pol", type="int", default=0,
@@ -115,6 +115,10 @@ parser.add_option("-c", "--station-centered", dest="stationcentered",
 
 
 (options, args) = parser.parse_args()
+
+if options.outfiledir[-1] != '/':
+    options.outfiledir = options.outfiledir + '/'
+
 
 # LOFAR centered
 lofarcentered = options.stationcentered
@@ -151,17 +155,17 @@ obsdir, bffilename, dsfilename = outfilenames(options.outfiledir, files, pol,
 try:
     reftime = np.load(obsdir+'/reftime.npy')
 except:
-    print "Reftime", obsdir+'reftime.npy', "not found"
+    print "Reftime", obsdir+'/reftime.npy', "not found"
     sys.exit()
 
 # Beamforming
-b = bf.BeamFormer(infile=files, bffilename=bffilename, pol=pol, 
+b = bf.BeamFormer(infile=files, bffilename=bffilename, ra=ra, dec=dec, pol=pol, 
         substation=options.substation, offset_max_allowed=offset_max_allowed,
         lofar_centered=lofarcentered, reftime=reftime, dm=options.dm,
         test=options.test, overwrite=True)
 
 print "Writing file", bffilename
-b.beamforming()
+#b.beamforming()
 
 print "Writing file", dsfilename
 b.convert2beam(dsfilename, nch=options.nch, t_int=options.t_int)

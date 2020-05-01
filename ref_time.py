@@ -11,11 +11,15 @@ import os; import sys; import glob; import time
 import numpy as np
 import dedispersion as dd
 
+#########################################################################
+# Defining functions
+
 def getRef_time(filelist, outfiledir, DM=26.76,
         fullparsetname='/home/veen/scripts/alert/StationCalibration.parset',
-        substation='HBA0', max_offset_allowed=400, verbose=True):
+        substation='HBA0', offset_max_allowed=400, verbose=True):
     """
-    Gets the reference time for a list of tbb files (station which start observing last).
+    Gets the reference time for a list of tbb files 
+    (station which start observing last).
     """
 
     start = time.time()
@@ -49,7 +53,8 @@ def getRef_time(filelist, outfiledir, DM=26.76,
             f_clock_offset = float(md.getClockCorrectionParset(fullparsetname,
                     station_name, antennaset=substation))
         else:
-            f_clock_offset = float(md.getClockCorrection(station, antennaset=substation))
+            f_clock_offset = float(md.getClockCorrection(station, 
+                    antennaset=substation))
 
         # Selecting first subband from first dipole
         dipoles = tbb[station].keys()
@@ -90,10 +95,10 @@ def getRef_time(filelist, outfiledir, DM=26.76,
         medsbstarttime = np.median(minsbstarttime)
 
         print "Reftime", station
-        mask = np.where(offsettime>medsbstarttime+timeres*max_offset_allowed)
+        mask = np.where(offsettime>medsbstarttime+timeres*offset_max_allowed)
         if len(mask) > 0:
-            reftime[i] = medsbstarttime + timeres * max_offset_allowed
-        elif medsbstarttime + timeres * max_offset_allowed > maxstarttime:
+            reftime[i] = medsbstarttime + timeres * offset_max_allowed
+        elif medsbstarttime + timeres * offset_max_allowed > maxstarttime:
             reftime[i] = maxstarttime
         else:
             print "Couldn't define reftime", tbb
@@ -105,10 +110,46 @@ def getRef_time(filelist, outfiledir, DM=26.76,
         print 'Reference time: ' , np.max(reftime) , 'from file ' 
     # Saving data
     try:
-        np.save(outfiledir+'reftime', np.max(reftime))
+        np.save(outfiledir+'reftime', max(reftime))
         np.save(outfiledir+'reftimes', reftime)
     except:
         print("Could not save reference times")
 
-    return np.max(reftime), reftime
+    return max(reftime), reftime
 
+#########################################################################
+# Main script
+
+if __name__=='__main__':
+
+    # Command line options
+    parser = OptionParser()
+
+    parser.add_option("-t", "--test", action="store_true", 
+           help="Test script by beamforming with 2 subbands", dest="test")
+    parser.add_option("--dm", "--dispersion-measure", dest="dm", type="float", 
+           default=26.8, help="Dispersion measure.")
+    parser.add_option("-o", "--offset_max_allowed", dest="offset_max_allowed", 
+           type="int", default=2000, 
+           help="Maximum offset between subbands in time bins.")
+    parser.add_option("-f", "--outfiledir", type="str",
+           default="/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/",
+           help="Directory where the output files will be generated.",
+           dest="outfiledir")
+
+    (options, args) = parser.parse_args()
+
+    # Input file
+    files = []
+    for f in args[:]:
+        files.append(glob.glob(f)[0])
+    files.sort()
+
+    if options.outfiledir[-1] != '/':
+        options.outfiledir = options.outfiledir + '/'
+
+    # Computing reference times
+    reftime, reftimes = getRef_time(files, options.outfiledir, 
+            DM=options.dm, offset_max_allowed=options.offset_max_allowed)
+
+# End of script

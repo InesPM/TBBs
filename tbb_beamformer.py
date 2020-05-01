@@ -34,6 +34,8 @@ class BeamFormer:
 
     infile:             List of .h5 files with TBB data of one station.
     bffilename:         Name of the output beamformed .h5 file.
+    ra:                 Right ascension of the source.
+    dec:                Declination of the source.
     pol:                Polarization to beamform (0|1)
     substation:         Substation to beamform. 
                         (HBA0|HBA1) for core stations. HBA for remote stations.
@@ -57,7 +59,7 @@ class BeamFormer:
     ---
     """
 
-    def __init__(self, infile, bffilename, 
+    def __init__(self, infile, bffilename, ra, dec,
             pol=0, substation='HBA', offset_max_allowed=400, 
             lofar_centered=True, reftime=None, dm=0.0, overwrite=True, 
             test=False):
@@ -67,6 +69,10 @@ class BeamFormer:
 
         # Output filename
         self.bffilename = bffilename # TODO: Replace by bffile
+
+        # Coordinates
+        self.ra = ra
+        self.dec = dec
 
         # Reference time
         if reftime:
@@ -310,9 +316,10 @@ class BeamFormer:
         #num = np.where(np.char.find(self.dipoles, d0)!= -1)[0][0]
         num = [i for i,dip in enumerate(self.dipoles) for d in dip if d0==d][0]
 
-        # Calculate time for the weights. 
+        # Calculate time for the weights.
+        # TODO: Is it subband time or reftime?
         t = utc2jd(self.tbb_files[num][s][d0][sb].attrs['TIME'])
-        weights = azel2beamweights(getRADEC_2_AZEL(ra,dec,t), 
+        weights = azel2beamweights(getRADEC_2_AZEL(self.ra,self.dec,t), 
                 self.station_name, 
                 self.tbb_files[num][s][d0][sb].attrs[u'CENTRAL_FREQUENCY'],
                 self.substation, lofarcentered=self.lofar_centered).toNumpy()
@@ -605,6 +612,7 @@ class BeamFormer:
         self.__bf_dictionary()
 
         # Writing data        
+        print("Writing FFT", self.station, "with shape", self.fftdata.shape)
         hfftdata = cr.hArray(self.fftdata, name="Beamed FFT")
 
         hfftdata.setHeader(
@@ -829,7 +837,17 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
     """
     
     # Opening files
-    files = glob.glob(filenames)
+    #files_all = glob.glob(filenames)
+    #files_all.sort()
+    files = []
+
+    for f in filenames:
+        try:
+            cr.open(f)
+            files.append(f)
+        except:
+            print(f, "could not be opened")
+
     files.sort()
     print("Reading files", files)
 
@@ -843,15 +861,15 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
     f = files[0].split('/')[-1].replace('.beam', '').split('_')
     obs = [l for l in f if 'L' in l][0]
     pol = [p for p in f if 'pol' in p][0]
-    hba = [h for h in f if 'HBA' in h][0]
+    #hba = [h for h in f if 'HBA' in h][0]
     date = [d for d in f if 'D' in d and 'T' in d][0]
 
     if outbfdir[-1] != '/':
         outbfdir = outbfdir + '/'
 
-    tabname = outbfdir+'{0}_{1}_TAB_{2}_{3}'.format(obs, date, hba, pol)
-    dsname  = outbfdir+'{0}_{1}_dynspec_{2}_{3}'.format(obs,date,hba,pol)
-    cdsname = outbfdir+'{0}_{1}_cleandynspec_{2}_{3}'.format(obs,date,hba,pol)
+    tabname = outbfdir+'{0}_{1}_TAB_{2}'.format(obs, date, pol)
+    dsname  = outbfdir+'{0}_{1}_dynspec_{2}'.format(obs, date, pol)
+    cdsname = outbfdir+'{0}_{1}_cleandynspec_{2}'.format(obs, date, pol)
 
     print("Writing files:")
     print(tabname, '\n', dsname, '\n', cdsname)
@@ -868,6 +886,38 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
     np.save(tabname, npTAB)
     np.save(dsname,  npdynspec)
     np.save(cdsname, npcleandynspec)
+
+if __name__=='__main__':
+
+    # Command line options
+    parser = OptionParser()
+
+    parser.add_option("-f", "--outfiledir", type="str",
+           default="/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/",
+           help="Directory where the output files will be generated.",
+           dest="outfiledir")
+    parser.add_option("--dm", "--dispersion-measure", dest="dm", type="float",
+           default=0, 
+           help="Dispersion measure difference between target and freezing DM.")
+    parser.add_option("-b", "--tbin", "--time_bin", dest="tbin",
+           type="int", default=12,
+           help="Maximum offset between subbands in time bins.")
+    parser.add_option("-i", "--incoherent", dest="incoherent",
+           help=("If provided, incoherent beamforming. Default: Coherent"),
+           action="store_true", default=False)
+
+    (options, args) = parser.parse_args()
+
+    if options.outfiledir[-1] != '/': options.outfiledir = options.outfiledir + '/'
+
+    filenames = []
+    for f in args[:]: filenames.append(glob.glob(f)[0])
+    filenames.sort()
+
+
+    # Beamforming across stations
+    add_stations(filenames, options.outfiledir, tbin=options.tbin, dm=options.dm,
+           incoherent=options.incoherent)
 
 #------------------------------------------------------------------------
 # End of the script

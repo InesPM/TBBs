@@ -50,12 +50,12 @@ def azel2beamweights(azel,station,freq,antennaset,lofarcentered=False):
     weights.phasetocomplex(phases)
     return weights 
 
-t=tools.strdate2jd('2019-11-26 15:22:00')
-ra=hms2rad(3,32,59.34)
-dec=dms2rad(54,34,43.2)
-azel=getRADEC_2_AZEL(ra,dec,t)
-print ra,dec,t,azel
-station="RS106"
-substation='HBA'
-freq=185000000.0#400*0.1953125+100e6
-weights=azel2beamweights(azel,station,freq,substation)
+#t=tools.strdate2jd('2019-11-26 15:22:00')
+#ra=hms2rad(3,32,59.34)
+#dec=dms2rad(54,34,43.2)
+#azel=getRADEC_2_AZEL(ra,dec,t)
+#print ra,dec,t,azel
+#station="RS106"
+#substation='HBA'
+#freq=185000000.0#400*0.1953125+100e6
+#weights=azel2beamweights(azel,station,freq,substation)
