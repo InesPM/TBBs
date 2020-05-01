@@ -165,7 +165,7 @@ b = bf.BeamFormer(infile=files, bffilename=bffilename, ra=ra, dec=dec, pol=pol,
         test=options.test, overwrite=True)
 
 print "Writing file", bffilename
-#b.beamforming()
+b.beamforming()
 
 print "Writing file", dsfilename
 b.convert2beam(dsfilename, nch=options.nch, t_int=options.t_int)
