@@ -826,7 +826,8 @@ class BeamFormer:
 # Beamforming across stations
 #------------------------------------------------------------------------
 
-def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
+def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True, 
+        skip_stations=[]):
     """
     Using pycrtools function addBeams to beamform across stations.
     Input
@@ -834,6 +835,7 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
     tbin: bin time
     dm: dispersion measure (0 if the data is already dedispersed)
     incoherent: True if incoherent beam addition, False if coherent 
+    skip_stations: list of stations to skip when beamforming across stations
     """
     
     # Opening files
@@ -842,11 +844,16 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True):
     files = []
 
     for f in filenames:
-        try:
-            cr.open(f)
-            files.append(f)
-        except:
-            print(f, "could not be opened")
+      if len(skip_stations) > 0:
+        st = f.split('/')[-1].split('_')[1]
+        if st in skip_stations:
+          print("Skipping station", st)
+          continue
+      try:
+        cr.open(f)
+        files.append(f)
+      except:
+        print(f, "could not be opened")
 
     files.sort()
     print("Reading files", files)
@@ -896,7 +903,7 @@ if __name__=='__main__':
            default="/data/projects/COM_ALERT/pipeline/analysis/marazuela/data/",
            help="Directory where the output files will be generated.",
            dest="outfiledir")
-    parser.add_option("--dm", "--dispersion-measure", dest="dm", type="float",
+    parser.add_option("--dm", "--dispersion_measure", dest="dm", type="float",
            default=0, 
            help="Dispersion measure difference between target and freezing DM.")
     parser.add_option("-b", "--tbin", "--time_bin", dest="tbin",
@@ -905,6 +912,9 @@ if __name__=='__main__':
     parser.add_option("-i", "--incoherent", dest="incoherent",
            help=("If provided, incoherent beamforming. Default: Coherent"),
            action="store_true", default=False)
+    parser.add_option("-s", "--skip_stations", type="str",
+           default="", help="Stations to skip when adding them together",
+           dest="skip_stations")
 
     (options, args) = parser.parse_args()
 
@@ -914,10 +924,12 @@ if __name__=='__main__':
     for f in args[:]: filenames.append(glob.glob(f)[0])
     filenames.sort()
 
+    skip_stations = [st[:5] for st in options.skip_stations.upper().split(',')]
 
     # Beamforming across stations
-    add_stations(filenames, options.outfiledir, tbin=options.tbin, dm=options.dm,
-           incoherent=options.incoherent)
+    add_stations(filenames, options.outfiledir, tbin=options.tbin, 
+           dm=options.dm, incoherent=options.incoherent, 
+           skip_stations=skip_stations)
 
 #------------------------------------------------------------------------
 # End of the script
