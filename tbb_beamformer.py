@@ -28,41 +28,57 @@ def utc2jd(utctimestamp):
 
 class BeamFormer:
     """
+    Description
+    -----------
     Beamforming TBB data for one station.
-    ---
-    INPUTS
+    
+    Main functions
+    --------------
 
-    infile:             List of .h5 files with TBB data of one station.
-    bffilename:         Name of the output beamformed .h5 file.
-    ra:                 Right ascension of the source.
-    dec:                Declination of the source.
-    pol:                Polarization to beamform (0|1)
-    substation:         Substation to beamform. 
-                        (HBA0|HBA1) for core stations. HBA for remote stations.
-    offset_max_allowed: Maximum dipole offset in time bins to be allowed.
-    lofar_centered:     Beamforming station with respect to the LOFAR center
-                        (default) or station centered.
-    reftime:            Reference start time of the ob. computed for all 
-                        stations.
-    dm:                 Dispersion measure used to freeze the data.
-    overwrite:          Remove output files if they previously exist.
-    test:               Only a few subbands are beamformed to check that there 
-                        are no errors.
-    ---
-    MAIN FUNCTIONS
+    beamforming:        
+        Beamforming TBB data, output in .h5 format
 
-    beamforming:        Beamforming TBB data, output in .h5 format
-    convert2beam:       FFTing beamformed data, output in .beam format that 
-                        can be beamformed across stations with the pycrtools 
-                        addBeams function. 
-                        To use once the beamformed .h5 data exists.
-    ---
+    convert2beam:       
+        FFTing beamformed data, output in .beam format that can be 
+        beamformed across stations with the pycrtools addBeams function.
+        To use once the beamformed .h5 data exists.
     """
 
     def __init__(self, infile, bffilename, ra, dec,
             pol=0, substation='HBA', offset_max_allowed=400, 
             lofar_centered=True, reftime=None, dm=0.0, overwrite=True, 
             test=False):
+        """
+        Parameters
+        ----------
+        infile : str             
+            List of .h5 files with TBB data of one station.
+        bffilename : str
+            Name of the output beamformed .h5 file.
+        ra : float
+            Right ascension of the source.
+        dec : float
+            Declination of the source.
+        pol : int (0|1)
+            Polarization to beamform.
+        substation : str (HBA0|HBA1|HBA)
+            Substation to beamform. 
+            (HBA0|HBA1) for core stations. HBA for remote stations.
+        offset_max_allowed : int 
+            Maximum dipole offset in time bins to be allowed.
+        lofar_centered : bool
+            Beamforming station with respect to the LOFAR center (default) 
+            or station centered.
+        reftime : float
+            Reference start time of the ob. computed for all stations.
+        dm : float
+            Dispersion measure used to freeze the data.
+        overwrite : bool
+            Remove output files if they previously exist.
+        test : bool
+            Only a few subbands are beamformed to check that there are 
+            no errors.
+        """
         
         # Input h5py data
         self.infile = infile #h5py.File(infile,'r')
@@ -186,6 +202,8 @@ class BeamFormer:
         return caltable        
 
     def __dipole_in_selection(self, dipole):
+        """Checking if dipole belongs to substation"""
+
         d=int(dipole[-3:])
         if self.substation=='HBA0':
             if d%2 == self.pol and d<48: return True
@@ -284,25 +302,33 @@ class BeamFormer:
 
         return offsets, available_dipoles, datalength
 
-    def __subband_beamforming(
-            self, sb, offsets, available_dipoles, datalength, caltable
-            ):
+    def __subband_beamforming(self, 
+            sb, offsets, available_dipoles, datalength, caltable):
         """
         Beamforming one subband
 
+        Description
+        -----------
         In the beamforming we correct for the calibration delay 
         and the beamforming weights.
         We're weighing by the number of available dipoles, 
         as this can be different per dipole
 
-        Input:
-        sb: subband id.
-        offsets: given by __subband_offsets
-        available dipoles: dipoles with data for the given polarization
-        datalength: number of time bins
-        caltable: calibration table given by read_calibration
+        Parameters
+        ----------
+        sb : 
+            subband id.
+        offsets :
+            given by __subband_offsets
+        available dipoles:
+            dipoles with data for the given polarization
+        datalength:
+            number of time bins
+        caltable:
+            calibration table given by read_calibration
 
-        Output:
+        Output
+        ------
         Creation of subband dataset
 
         """
@@ -358,9 +384,9 @@ class BeamFormer:
         bfdata /= np.sqrt(sbweight)
 
         # Zero-padding
-        #pad = self.datalength-datalength
-        #bfdata = np.append(np.zeros(pad), bfdata)
-        #sbweight = np.append(np.zeros(pad), sbweight)
+        pad = self.datalength-datalength
+        bfdata = np.append(bfdata, np.zeros(pad))
+        sbweight = np.append(sbweight, np.zeros(pad))
 
         # Create subband dataset
         self.bffile[s]['BFDATA'].create_dataset(sb,data=bfdata)
@@ -735,11 +761,22 @@ class BeamFormer:
     def convert2beam(self, dynspecfile, DM=26.8, nch=16, t_int=6):
         """
         Creating dynamic spectrum from tbb beamformed data
-        INPUT:
-        dynspecfile : dynamic spectrum output file
-        DM          : dispersion measure of the source
-        nch         : number of channels
-        t_int       : integration time
+        
+        Description
+        -----------
+        A .beam pycrtools file with the dynamic spectrum is created from the 
+        .h5 TBB beamformed data.
+
+        Parameters
+        ----------
+        dynspecfile : str
+            dynamic spectrum output file
+        DM : int
+            dispersion measure of the source
+        nch : int
+            number of channels
+        t_int : int 
+            integration time
         """
 
         print("--------------------------")
@@ -830,12 +867,19 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True,
         skip_stations=[]):
     """
     Using pycrtools function addBeams to beamform across stations.
-    Input
-    files: list of .beam station files
-    tbin: bin time
-    dm: dispersion measure (0 if the data is already dedispersed)
-    incoherent: True if incoherent beam addition, False if coherent 
-    skip_stations: list of stations to skip when beamforming across stations
+    
+    Parameters
+    ----------
+    files : list 
+        list of .beam station files
+    tbin : int 
+        bin time
+    dm : float
+        dispersion measure (0 if the data is already dedispersed)
+    incoherent : bool
+        True if incoherent beam addition, False if coherent 
+    skip_stations : list 
+        list of stations to skip when beamforming across stations
     """
     
     # Opening files
@@ -871,8 +915,7 @@ def add_stations(filenames, outbfdir, tbin=12, dm=0, incoherent=True,
     #hba = [h for h in f if 'HBA' in h][0]
     date = [d for d in f if 'D' in d and 'T' in d][0]
 
-    if outbfdir[-1] != '/':
-        outbfdir = outbfdir + '/'
+    if outbfdir[-1] != '/': outbfdir = outbfdir + '/'
 
     tabname = outbfdir+'{0}_{1}_TAB_{2}'.format(obs, date, pol)
     dsname  = outbfdir+'{0}_{1}_dynspec_{2}'.format(obs, date, pol)
