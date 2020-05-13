@@ -1,3 +1,5 @@
+from __future__ import print_function
+from __future__ import division
 import h5py
 import pycrtools as cr
 import numpy as np
@@ -50,23 +52,23 @@ def outfilenames(outfiledir, files, pol, subs, lofarcentered, test=False):
     # Creating output directories
     try:
         os.mkdir(outfiledir + obsdir)
-        print "Directory", outfiledir + obsdir, "created"
+        print("Directory", outfiledir + obsdir, "created")
     except:
-        print "Directory", outfiledir + obsdir, "exists"
+        print("Directory", outfiledir + obsdir, "exists")
 
     bffiledir = outfiledir + obsdir + '/bfh5_data/'
     try:
         os.mkdir(bffiledir)
-        print "Directory", bffiledir, "created"
+        print("Directory", bffiledir, "created")
     except:
-        print "Directory", bffiledir, "exists"
+        print("Directory", bffiledir, "exists")
 
     beamfiledir = outfiledir + obsdir + '/beam_data/'
     try:
         os.mkdir(beamfiledir)
-        print "Directory", beamfiledir, "created"
+        print("Directory", beamfiledir, "created")
     except:
-        print "Directory", beamfiledir, "exists"
+        print("Directory", beamfiledir, "exists")
 
     # LOFAR centered?
     if lofarcentered:
@@ -155,7 +157,7 @@ obsdir, bffilename, dsfilename = outfilenames(options.outfiledir, files, pol,
 try:
     reftime = np.load(obsdir+'/reftime.npy')
 except:
-    print "Reftime", obsdir+'/reftime.npy', "not found"
+    print("Reftime", obsdir+'/reftime.npy', "not found")
     sys.exit()
 
 # Beamforming
@@ -164,10 +166,10 @@ b = bf.BeamFormer(infile=files, bffilename=bffilename, ra=ra, dec=dec, pol=pol,
         lofar_centered=lofarcentered, reftime=reftime, dm=options.dm,
         test=options.test, overwrite=True)
 
-print "Writing file", bffilename
+print("Writing file", bffilename)
 b.beamforming()
 
-print "Writing file", dsfilename
+print("Writing file", dsfilename)
 b.convert2beam(dsfilename, nch=options.nch, t_int=options.t_int)
 
 print("File written: ", bffilename)

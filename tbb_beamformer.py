@@ -240,7 +240,7 @@ class BeamFormer:
         d0 = self.tbb_files[0][s].keys()[0]
         sb0 = self.tbb_files[0][s][d0].keys()[0]
         #TODO: check if this value can we obtained from the header
-        self.datalength = 585000 #len(tbb_files[0][s][d0][sb0])
+        self.datalength = len(self.tbb_files[0][s][d0][sb0]) #585000
         print("datalength ", self.datalength)
 
         # Define bandwidth
